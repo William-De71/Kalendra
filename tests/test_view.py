@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unittest
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from helpers import ServerTestCase, make_event
 from kalendra.calendarview import (
@@ -68,7 +68,7 @@ class ExpansionTests(unittest.TestCase):
     """`expand_occurrences` produit les instances, là où `overlaps_range` répond oui/non."""
 
     def _unix(self, texte: str) -> int:
-        moment = datetime.strptime(texte, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        moment = datetime.strptime(texte, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
         return int(moment.timestamp())
 
     def test_evenement_simple(self):
@@ -89,7 +89,7 @@ class ExpansionTests(unittest.TestCase):
         found = expand_occurrences(
             data, self._unix("20260301T000000Z"), self._unix("20260401T000000Z")
         )
-        jours = [datetime.fromtimestamp(o.start, timezone.utc).strftime("%Y%m%d") for o in found]
+        jours = [datetime.fromtimestamp(o.start, UTC).strftime("%Y%m%d") for o in found]
         self.assertEqual(jours, ["20260302", "20260309", "20260323", "20260330"])
 
     def test_recurrence_id_remplace_une_occurrence(self):
@@ -143,11 +143,11 @@ class VueMensuelleTests(ServerTestCase):
         self.client.put(
             f"{PERSO}c.ics",
             (
-                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:c\r\n"
-                "DTSTAMP:20260101T000000Z\r\nDTSTART;VALUE=DATE:20260318\r\n"
-                "DTEND;VALUE=DATE:20260320\r\nSUMMARY:Deplacement Stuttgart\r\n"
-                "END:VEVENT\r\nEND:VCALENDAR\r\n"
-            ).encode("utf-8"),
+                b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:c\r\n"
+                b"DTSTAMP:20260101T000000Z\r\nDTSTART;VALUE=DATE:20260318\r\n"
+                b"DTEND;VALUE=DATE:20260320\r\nSUMMARY:Deplacement Stuttgart\r\n"
+                b"END:VEVENT\r\nEND:VCALENDAR\r\n"
+            ),
         )
 
     def mois(self, m: str = "2026-03"):
@@ -276,11 +276,11 @@ class FuseauTests(ServerTestCase):
         self.client.put(
             f"{PERSO}j.ics",
             (
-                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:j\r\n"
-                "DTSTAMP:20260101T000000Z\r\nDTSTART;VALUE=DATE:20260301\r\n"
-                "DTEND;VALUE=DATE:20260302\r\nSUMMARY:Ferie\r\n"
-                "END:VEVENT\r\nEND:VCALENDAR\r\n"
-            ).encode("utf-8"),
+                b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:j\r\n"
+                b"DTSTAMP:20260101T000000Z\r\nDTSTART;VALUE=DATE:20260301\r\n"
+                b"DTEND;VALUE=DATE:20260302\r\nSUMMARY:Ferie\r\n"
+                b"END:VEVENT\r\nEND:VCALENDAR\r\n"
+            ),
         )
         html = self.client.request(
             "GET", f"{VUE}?m=2026-03", headers={"Accept": "text/html"}
@@ -305,3 +305,200 @@ class FuseauTests(ServerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImportTests(ServerTestCase):
+    """Import d'un .ics depuis la vue web, accessible à tout compte."""
+
+    FICHIER = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//tests//FR\r\n"
+        "BEGIN:VEVENT\r\nUID:imp-1\r\nDTSTAMP:20260101T090000Z\r\n"
+        "DTSTART:20260601T090000Z\r\nDTEND:20260601T100000Z\r\n"
+        "SUMMARY:Premier\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nUID:imp-2\r\nDTSTAMP:20260101T090000Z\r\n"
+        "DTSTART:20260602T090000Z\r\nDTEND:20260602T100000Z\r\n"
+        "SUMMARY:Second\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+
+    def _jeton(self, client, chemin: str) -> str:
+        page = client.request("GET", chemin, headers={"Accept": "text/html"}).text
+        marqueur = "name=csrf value='"
+        debut = page.index(marqueur) + len(marqueur)
+        return page[debut : page.index("'", debut)]
+
+    def _televerser(self, client, chemin: str, contenu: str, csrf: str):
+        limite = "----KalendraTest"
+        corps = (
+            f"--{limite}\r\n"
+            'Content-Disposition: form-data; name="csrf"\r\n\r\n'
+            f"{csrf}\r\n"
+            f"--{limite}\r\n"
+            'Content-Disposition: form-data; name="fichier"; filename="a.ics"\r\n'
+            "Content-Type: text/calendar\r\n\r\n"
+            f"{contenu}\r\n"
+            f"--{limite}--\r\n"
+        ).encode()
+        return client.request(
+            "POST",
+            chemin,
+            corps,
+            {"Content-Type": f"multipart/form-data; boundary={limite}"},
+        )
+
+    def test_un_compte_ordinaire_peut_importer(self):
+        csrf = self._jeton(self.alice, "/view/alice/boulot/")
+        result = self._televerser(
+            self.alice, "/view/alice/boulot/import", self.FICHIER, csrf
+        )
+        self.assertStatus(result, 303)
+        self.assertIn("2", result.header("location"))
+        calendrier = self.db.get_calendar(self.alice_id, "boulot")
+        self.assertEqual(self.db.calendar_stats(calendrier["id"]), 2)
+
+    def test_le_reimport_met_a_jour_sans_dupliquer(self):
+        csrf = self._jeton(self.alice, "/view/alice/boulot/")
+        self._televerser(self.alice, "/view/alice/boulot/import", self.FICHIER, csrf)
+        self._televerser(self.alice, "/view/alice/boulot/import", self.FICHIER, csrf)
+        calendrier = self.db.get_calendar(self.alice_id, "boulot")
+        self.assertEqual(self.db.calendar_stats(calendrier["id"]), 2)
+
+    def test_un_evenement_invalide_nempeche_pas_les_autres(self):
+        casse = self.FICHIER.replace(
+            "BEGIN:VEVENT\r\nUID:imp-2", "BEGIN:VEVENT\r\nSUMMARY:sans uid\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:imp-2"
+        )
+        csrf = self._jeton(self.alice, "/view/alice/boulot/")
+        result = self._televerser(self.alice, "/view/alice/boulot/import", casse, csrf)
+        self.assertStatus(result, 303)
+        calendrier = self.db.get_calendar(self.alice_id, "boulot")
+        self.assertEqual(self.db.calendar_stats(calendrier["id"]), 2)
+
+    def test_jeton_csrf_obligatoire(self):
+        result = self._televerser(
+            self.alice, "/view/alice/boulot/import", self.FICHIER, "faux"
+        )
+        self.assertStatus(result, 403)
+
+    def test_import_dans_lagenda_dun_autre_refuse(self):
+        csrf = self._jeton(self.alice, "/view/alice/boulot/")
+        result = self._televerser(
+            self.alice, "/view/will/perso/import", self.FICHIER, csrf
+        )
+        self.assertStatus(result, 403)
+
+    def test_agenda_inconnu(self):
+        csrf = self._jeton(self.alice, "/view/alice/boulot/")
+        result = self._televerser(
+            self.alice, "/view/alice/zzz/import", self.FICHIER, csrf
+        )
+        self.assertStatus(result, 404)
+
+    def test_la_vue_reste_en_lecture_seule_ailleurs(self):
+        self.assertStatus(self.alice.request("POST", "/view/alice/boulot/"), 405)
+
+
+class GestionAgendaTests(ServerTestCase):
+    """Création et suppression d'agendas par leur propriétaire, depuis /view/."""
+
+    FICHIER = ImportTests.FICHIER
+
+    def _jeton(self, client) -> str:
+        page = client.request("GET", "/view/", headers={"Accept": "text/html"}).text
+        marqueur = "name=csrf value='"
+        debut = page.index(marqueur) + len(marqueur)
+        return page[debut : page.index("'", debut)]
+
+    def _creer(self, client, champs: dict[str, str], fichier: str | None = None):
+        limite = "----KalendraTest"
+        morceaux = []
+        for nom, valeur in champs.items():
+            morceaux.append(
+                f"--{limite}\r\n"
+                f'Content-Disposition: form-data; name="{nom}"\r\n\r\n{valeur}\r\n'
+            )
+        if fichier is not None:
+            morceaux.append(
+                f"--{limite}\r\n"
+                'Content-Disposition: form-data; name="fichier"; filename="a.ics"\r\n'
+                f"Content-Type: text/calendar\r\n\r\n{fichier}\r\n"
+            )
+        corps = ("".join(morceaux) + f"--{limite}--\r\n").encode("utf-8")
+        return client.request(
+            "POST",
+            "/view/agendas/creer",
+            corps,
+            {"Content-Type": f"multipart/form-data; boundary={limite}"},
+        )
+
+    def test_un_compte_ordinaire_cree_son_agenda(self):
+        csrf = self._jeton(self.alice)
+        result = self._creer(self.alice, {"csrf": csrf, "name": "sport"})
+        self.assertStatus(result, 303)
+        self.assertIsNotNone(self.db.get_calendar(self.alice_id, "sport"))
+
+    def test_creer_et_importer_en_une_fois(self):
+        csrf = self._jeton(self.alice)
+        result = self._creer(
+            self.alice, {"csrf": csrf, "name": "vacances"}, fichier=self.FICHIER
+        )
+        self.assertStatus(result, 303)
+        calendrier = self.db.get_calendar(self.alice_id, "vacances")
+        self.assertIsNotNone(calendrier)
+        self.assertEqual(self.db.calendar_stats(calendrier["id"]), 2)
+
+    def test_un_import_rate_ne_laisse_pas_dagenda_vide(self):
+        csrf = self._jeton(self.alice)
+        result = self._creer(
+            self.alice, {"csrf": csrf, "name": "rate"}, fichier="pas du iCalendar"
+        )
+        self.assertStatus(result, 303)
+        self.assertIsNone(self.db.get_calendar(self.alice_id, "rate"))
+
+    def test_nom_invalide_refuse(self):
+        csrf = self._jeton(self.alice)
+        result = self._creer(self.alice, {"csrf": csrf, "name": "../evasion"})
+        self.assertStatus(result, 303)
+        self.assertIn("invalide", result.header("location"))
+
+    def test_creer_pour_autrui_refuse(self):
+        csrf = self._jeton(self.alice)
+        result = self._creer(
+            self.alice, {"csrf": csrf, "name": "pirate", "proprietaire": "will"}
+        )
+        self.assertStatus(result, 303)
+        self.assertIsNone(self.db.get_calendar(self.will_id, "pirate"))
+
+    def test_ladministrateur_cree_pour_autrui(self):
+        csrf = self._jeton(self.client)
+        result = self._creer(
+            self.client, {"csrf": csrf, "name": "delegue", "proprietaire": "alice"}
+        )
+        self.assertStatus(result, 303)
+        self.assertIsNotNone(self.db.get_calendar(self.alice_id, "delegue"))
+
+    def test_csrf_obligatoire_a_la_creation(self):
+        result = self._creer(self.alice, {"csrf": "faux", "name": "x"})
+        self.assertStatus(result, 403)
+
+    def test_suppression_par_le_proprietaire(self):
+        csrf = self._jeton(self.alice)
+        calendrier = self.db.get_calendar(self.alice_id, "boulot")
+        result = self.alice.request(
+            "POST",
+            "/view/alice/boulot/supprimer",
+            f"csrf={csrf}".encode(),
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertStatus(result, 303)
+        self.assertIsNone(self.db.get_calendar(self.alice_id, "boulot"))
+        self.assertIsNotNone(calendrier)
+
+    def test_suppression_de_lagenda_dun_autre_refusee(self):
+        csrf = self._jeton(self.alice)
+        result = self.alice.request(
+            "POST",
+            "/view/will/perso/supprimer",
+            f"csrf={csrf}".encode(),
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertStatus(result, 403)
+        self.assertIsNotNone(self.db.get_calendar(self.will_id, "perso"))

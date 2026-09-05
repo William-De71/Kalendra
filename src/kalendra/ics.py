@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .rrule import UnsupportedRule, iter_occurrences, last_occurrence, parse_rrule
@@ -21,9 +21,9 @@ OBJECT_COMPONENTS = ("VEVENT", "VTODO", "VJOURNAL", "VFREEBUSY")
 #: Garde-fou d'expansion lors d'un filtre temporel.
 MAX_EXPANSION = 2000
 
-EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-DATETIME_MIN = datetime(1, 1, 2, tzinfo=timezone.utc)
-DATETIME_MAX = datetime(9999, 12, 30, tzinfo=timezone.utc)
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+DATETIME_MIN = datetime(1, 1, 2, tzinfo=UTC)
+DATETIME_MAX = datetime(9999, 12, 30, tzinfo=UTC)
 
 #: Quelques identifiants de fuseau Microsoft rencontrés chez Outlook/Exchange.
 WINDOWS_TZ = {
@@ -219,7 +219,7 @@ def parse_datetime_value(raw: str, tzid: str | None = None) -> datetime | date |
     value = raw.strip()
     if value.endswith("Z"):
         try:
-            return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+            return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
         except ValueError:
             return None
     if "T" in value:
@@ -257,10 +257,10 @@ def to_utc(value: datetime | date | None) -> datetime | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
     return None
 
 
@@ -686,7 +686,7 @@ def build_feed(
     for raw in objects:
         try:
             blocks = iter_top_level_blocks(raw)
-        except Exception:  # noqa: BLE001 - une ressource corrompue ne casse pas le flux
+        except Exception:
             continue
         for block_name, block_lines in blocks:
             if block_name == "VTIMEZONE":
@@ -703,3 +703,53 @@ def build_feed(
                 body.extend(fold(line) for line in block_lines)
 
     return "\r\n".join([*lines, *timezones, *body, "END:VCALENDAR", ""])
+
+# ------------------------------------------------- découpage pour l'import
+
+
+def split_calendar(texte: str) -> tuple[list[str], list[str]]:
+    """Sépare le préambule (entête + VTIMEZONE) des blocs VEVENT/VTODO.
+
+    On travaille sur les lignes dépliées puis on les replie telles quelles :
+    reconstruire les objets depuis l'arbre analysé les réécrirait, donc
+    perdrait les propriétés que l'analyseur ignore.
+    """
+    preambule: list[str] = []
+    blocs: list[list[str]] = []
+    courant: list[str] | None = None
+    dans_timezone = False
+
+    for ligne in unfold(texte):
+        nom = ligne.split(":", 1)[0].split(";", 1)[0].upper()
+        valeur = ligne.split(":", 1)[1].strip().upper() if ":" in ligne else ""
+
+        if nom == "BEGIN" and valeur == "VTIMEZONE":
+            dans_timezone = True
+            preambule.append(ligne)
+            continue
+        if dans_timezone:
+            preambule.append(ligne)
+            if nom == "END" and valeur == "VTIMEZONE":
+                dans_timezone = False
+            continue
+
+        if nom == "BEGIN" and valeur in {"VEVENT", "VTODO", "VJOURNAL"}:
+            courant = [ligne]
+            continue
+        if courant is not None:
+            courant.append(ligne)
+            if nom == "END" and valeur in {"VEVENT", "VTODO", "VJOURNAL"}:
+                blocs.append(courant)
+                courant = None
+            continue
+
+        entete = nom in {"BEGIN", "VERSION", "PRODID", "CALSCALE", "METHOD"} or nom.startswith("X-")
+        if entete and not (nom == "BEGIN" and valeur != "VCALENDAR"):
+            preambule.append(ligne)
+
+    return preambule, ["\r\n".join(bloc) for bloc in blocs]
+
+
+def wrap_component(preambule: list[str], bloc: str) -> str:
+    lignes = [*preambule, bloc, "END:VCALENDAR"]
+    return "\r\n".join(lignes) + "\r\n"

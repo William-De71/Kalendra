@@ -75,7 +75,9 @@ class Response:
         return STATUS_TEXT.get(self.status, "Unknown")
 
 
-def text_response(status: int, message: str = "", content_type: str = "text/plain; charset=utf-8") -> Response:
+def text_response(
+    status: int, message: str = "", content_type: str = "text/plain; charset=utf-8"
+) -> Response:
     body = message.encode("utf-8")
     return Response(status, body, [("Content-Type", content_type)])
 
@@ -92,3 +94,46 @@ def error(status: int, message: str = "") -> Response:
 def href_quote(path: str) -> str:
     """Encode un chemin pour l'élément `<D:href>` en gardant les séparateurs."""
     return quote(path, safe="/@:+~")
+
+
+def parse_multipart(body: bytes, content_type: str) -> dict[str, bytes]:
+    """Extrait les champs d'un corps `multipart/form-data`.
+
+    Écrit à la main plutôt qu'avec la stdlib : `cgi.FieldStorage` a disparu en
+    Python 3.13, et `email.parser` obligerait à reconstruire un message complet
+    pour un formulaire à deux champs. On ne gère donc que ce dont l'interface a
+    besoin — des champs simples et un fichier — et on renvoie les valeurs en
+    octets, sans les décoder : un .ics déposé doit être stocké tel quel.
+
+    Le nom de fichier n'est pas conservé : Kalendra nomme ses ressources
+    d'après l'UID des événements, jamais d'après ce que fournit le client.
+    """
+    marqueur = "boundary="
+    position = content_type.find(marqueur)
+    if position < 0:
+        return {}
+    frontiere = content_type[position + len(marqueur) :].strip().strip('"')
+    if not frontiere:
+        return {}
+
+    separateur = b"--" + frontiere.encode("ascii", "replace")
+    champs: dict[str, bytes] = {}
+    for partie in body.split(separateur):
+        if partie in (b"", b"--", b"--\r\n", b"\r\n"):
+            continue
+        entete, _, contenu = partie.partition(b"\r\n\r\n")
+        if not _:
+            continue
+        nom = ""
+        for ligne in entete.split(b"\r\n"):
+            texte = ligne.decode("utf-8", "replace")
+            if texte.lower().startswith("content-disposition:"):
+                for morceau in texte.split(";"):
+                    cle, _, valeur = morceau.strip().partition("=")
+                    if cle.lower() == "name":
+                        nom = valeur.strip().strip('"')
+        if nom:
+            # Le corps d'une partie se termine par le CRLF qui précède la
+            # frontière suivante : il ne fait pas partie de la donnée.
+            champs[nom] = contenu[:-2] if contenu.endswith(b"\r\n") else contenu
+    return champs

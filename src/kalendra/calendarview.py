@@ -12,12 +12,13 @@ un tableau HTML de sept colonnes, des liens pour naviguer entre les mois.
 from __future__ import annotations
 
 import calendar as _calendar
+import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from html import escape
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
-from .http import Request, Response, error, text_response
+from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
     Occurrence,
     component_window,
@@ -26,7 +27,10 @@ from .ics import (
     parse_calendar,
     to_unix,
 )
+from .importics import importer
 from .resources import Kind, resolve
+from .security import csrf_valid
+from .vcard import InvalidCardData, parse_vcard
 
 MOIS = (
     "janvier",
@@ -86,6 +90,26 @@ table.grille td.today { background:var(--today); }
 .evenement .heure { color:var(--muted); font-variant-numeric:tabular-nums; }
 .reste { display:block; font-size:12px; color:var(--muted); margin-top:3px; }
 .vide { color:var(--muted); padding:28px 0; text-align:center; }
+.flash { padding:10px 14px; border-radius:10px; margin:0 24px 14px; border:1px solid var(--line);
+  background:var(--card); }
+details.import { margin-top:18px; border:1px solid var(--line); border-radius:10px;
+  padding:12px 14px; background:var(--card); }
+details.import summary { cursor:pointer; color:var(--accent); font-size:14px; }
+details.import form { display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+  margin-top:12px; }
+details.import input[type=file] { font:inherit; min-width:0; flex:1; }
+details.import button { font:inherit; padding:7px 13px; border-radius:8px;
+  border:1px solid transparent; background:var(--accent); color:#fff; cursor:pointer; }
+details.import p { font-size:12.5px; margin:10px 0 0; }
+details.import select { font:inherit; padding:7px 9px; border:1px solid var(--line);
+  border-radius:8px; background:var(--bg); color:var(--fg); }
+details.import form.danger { margin-top:14px; padding-top:12px;
+  border-top:1px solid var(--line); }
+details.import button.danger { background:transparent; border-color:var(--line);
+  color:#b3261e; }
+@media (prefers-color-scheme: dark) {
+  details.import button.danger { color:#f2836b; }
+}
 section.detail { background:var(--card); border:1px solid var(--line);
   border-radius:12px; padding:18px 20px; max-width:760px; }
 section.detail h2 { margin:0 0 14px; font-size:19px; }
@@ -170,8 +194,8 @@ def remplir(
         return
     debut = semaines[0][0].jour - timedelta(days=1)
     fin = semaines[-1][-1].jour + timedelta(days=2)
-    borne_debut = to_unix(datetime(debut.year, debut.month, debut.day, tzinfo=timezone.utc))
-    borne_fin = to_unix(datetime(fin.year, fin.month, fin.day, tzinfo=timezone.utc))
+    borne_debut = to_unix(datetime(debut.year, debut.month, debut.day, tzinfo=UTC))
+    borne_fin = to_unix(datetime(fin.year, fin.month, fin.day, tzinfo=UTC))
 
     cases = {jour.jour: jour for semaine in semaines for jour in semaine}
 
@@ -215,6 +239,15 @@ def _page(titre: str, corps: str) -> Response:
     return text_response(200, html, "text/html; charset=utf-8")
 
 
+def _lien_admin(base: str, admin: bool) -> str:
+    """Retour vers l'UI d'administration, réservé aux administrateurs.
+
+    Un simple utilisateur recevrait un 403 sur /admin : mieux vaut ne pas lui
+    montrer la porte que de le laisser s'y cogner.
+    """
+    return f"<a href='{base}/admin'>administration</a>" if admin else ""
+
+
 def _lien_mois(base: str, user: str, nom: str, annee: int, mois: int) -> str:
     return f"{base}/view/{quote(user)}/{quote(nom)}/?m={annee:04d}-{mois:02d}"
 
@@ -229,6 +262,34 @@ def _puce(occurrence: Occurrence, base: str, user: str, nom: str, tz) -> str:
     return f"<a class=evenement href='{cible}' title='{titre}'>{heure}{titre}</a>"
 
 
+def _formulaire_import(base: str, user: str, nom: str, token: str) -> str:
+    """Dépôt d'un .ics dans l'agenda affiché.
+
+    Replié dans un <details> : c'est une action ponctuelle, elle n'a pas à
+    occuper l'écran sous la grille à chaque consultation.
+    """
+    if not token:
+        return ""
+    action = f"{base}/view/{quote(user)}/{quote(nom)}/import"
+    suppression = f"{base}/view/{quote(user)}/{quote(nom)}/supprimer"
+    return (
+        "<details class=import><summary>Ajouter des événements depuis un fichier "
+        ".ics (vacances scolaires, jours fériés…)</summary>"
+        f"<form method=post action='{action}' enctype='multipart/form-data'>"
+        f"<input type=hidden name=csrf value='{escape(token)}'>"
+        "<input type=file name=fichier accept='.ics,text/calendar' required>"
+        "<button>Importer</button></form>"
+        "<p class=muted>Les événements sont ajoutés à cet agenda. Réimporter le "
+        "même fichier met à jour les événements au lieu de les dupliquer. "
+        "Kalendra ne télécharge rien : récupérez le fichier vous-même, puis "
+        "déposez-le ici.</p>"
+        f"<form method=post action='{suppression}' class=danger "
+        "onsubmit=\"return confirm('Supprimer cet agenda et tous ses événements ?')\">"
+        f"<input type=hidden name=csrf value='{escape(token)}'>"
+        "<button class=danger>Supprimer cet agenda</button></form></details>"
+    )
+
+
 def rendre_mois(
     config,
     calendar_row,
@@ -238,6 +299,9 @@ def rendre_mois(
     tz,
     semaines: list[list[Jour]],
     aujourdhui: date,
+    admin: bool = False,
+    token: str = "",
+    message: str = "",
 ) -> Response:
     base = config.base_path
     pa, pm = mois_precedent(annee, mois)
@@ -270,16 +334,22 @@ def rendre_mois(
 
     corps = (
         "<header>"
-        f"<span class=pastille style='background:{escape(calendar_row['color'] or '#3584e4')}'></span>"
+        "<span class=pastille style='background:"
+        f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
         f"<h1>{escape(titre)}</h1>"
         f"<span class=mois>{MOIS[mois - 1]} {annee}</span>"
         "<nav>"
         f"<a href='{_lien_mois(base, user, nom, pa, pm)}'>← précédent</a>"
-        f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>aujourd'hui</a>"
+        f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>"
+        "aujourd'hui</a>"
         f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>suivant →</a>"
         f"<a href='{base}/view/'>agendas</a>"
+        f"{_lien_admin(base, admin)}"
         "</nav></header>"
-        f"<main><table class=grille><tr>{entetes}</tr>{''.join(lignes)}</table></main>"
+        + (f"<div class=flash>{escape(message)}</div>" if message else "")
+        + f"<main><table class=grille><tr>{entetes}</tr>{''.join(lignes)}</table>"
+        + _formulaire_import(base, user, nom, token)
+        + "</main>"
         f"<footer>{total} occurrence{'s' if total > 1 else ''} affichée"
         f"{'s' if total > 1 else ''} · vue en lecture seule : "
         "pour créer ou modifier un événement, utilisez votre client CalDAV.</footer>"
@@ -287,7 +357,9 @@ def rendre_mois(
     return _page(f"{titre} — {MOIS[mois - 1]} {annee}", corps)
 
 
-def rendre_index(db, config, user_row, admin: bool) -> Response:
+def rendre_index(
+    db, config, user_row, admin: bool, token: str = "", message: str = ""
+) -> Response:
     base = config.base_path
     if admin:
         agendas = [(row["username"], row) for row in db.list_all_calendars()]
@@ -307,22 +379,197 @@ def rendre_index(db, config, user_row, admin: bool) -> Response:
             f"{compte} objet{'s' if compte > 1 else ''}</span></li>"
         )
 
+    if admin:
+        carnets = [(row["username"], row) for row in db.list_all_addressbooks()]
+    else:
+        carnets = [(user_row["username"], row) for row in db.list_addressbooks(user_row["id"])]
+
+    fiches = []
+    for proprietaire, row in carnets:
+        compte = db.calendar_stats(row["id"])
+        cible = f"{base}/view/contacts/{quote(proprietaire)}/{quote(row['name'])}/"
+        fiches.append(
+            "<li>"
+            f"<span class=pastille style='background:{escape(row['color'] or '#3584e4')};"
+            "width:12px;height:12px;border-radius:3px;display:inline-block'></span>"
+            f"<a href='{cible}'>{escape(row['display_name'] or row['name'])}</a>"
+            f"<span style='color:var(--muted);font-size:13px'>{proprietaire} · "
+            f"{compte} contact{'s' if compte > 1 else ''}</span></li>"
+        )
+
+    creation = ""
+    if token:
+        # Un administrateur crée pour n'importe quel compte, d'où le sélecteur ;
+        # un utilisateur ordinaire n'a rien à choisir.
+        if admin:
+            options = "".join(
+                f"<option value='{escape(u['username'])}'>{escape(u['username'])}</option>"
+                for u in db.list_users()
+            )
+            choix = f"<select name=proprietaire>{options}</select>"
+        else:
+            choix = ""
+        creation = (
+            "<details class=import><summary>Nouvel agenda</summary>"
+            f"<form method=post action='{base}/view/agendas/creer' "
+            "enctype='multipart/form-data'>"
+            f"<input type=hidden name=csrf value='{escape(token)}'>"
+            f"{choix}"
+            "<input name=name placeholder='identifiant (vacances)' required "
+            "pattern='[A-Za-z0-9._-]{1,64}'>"
+            "<input name=display_name placeholder='nom affiché'>"
+            "<input name=color type=color value='#3584e4'>"
+            "<button>Créer</button></form>"
+            "<p class=muted>L'identifiant figure dans l'URL CalDAV de l'agenda : "
+            "il n'est plus modifiable ensuite.</p></details>"
+            "<details class=import><summary>Ajouter un calendrier externe "
+            "(vacances scolaires, jours fériés…)</summary>"
+            f"<form method=post action='{base}/view/agendas/creer' "
+            "enctype='multipart/form-data'>"
+            f"<input type=hidden name=csrf value='{escape(token)}'>"
+            f"{choix}"
+            "<input name=name placeholder='identifiant (vacances)' required "
+            "pattern='[A-Za-z0-9._-]{1,64}'>"
+            "<input type=file name=fichier accept='.ics,text/calendar' required>"
+            "<button>Créer et importer</button></form>"
+            "<p class=muted>Crée un agenda dédié et y verse le fichier. "
+            "Pour les vacances scolaires : téléchargez le <code>.ics</code> de "
+            "votre zone sur "
+            "<code>fr.ftp.opendatasoft.com/openscol/fr-en-calendrier-scolaire/</code> "
+            "(Zone-A.ics, Zone-B.ics, Zone-C.ics), puis déposez-le ici. "
+            "Kalendra ne télécharge rien lui-même : récupérez le fichier, "
+            "déposez-le. Un agenda dédié se vide et se réimporte sans toucher "
+            "à vos propres événements.</p></details>"
+        )
+
     corps = (
-        "<header><h1>Agendas</h1></header><main><ul class=agendas>"
+        f"<header><h1>Agendas</h1><nav>{_lien_admin(base, admin)}</nav></header>"
+        + (f"<div class=flash>{escape(message)}</div>" if message else "")
+        + "<main><ul class=agendas>"
         + ("".join(elements) or "<li class=vide>Aucun agenda.</li>")
+        + "</ul>"
+        + creation
+        + "<h1 style='font-size:18px;margin:26px 0 12px'>Carnets d'adresses</h1>"
+        + "<ul class=agendas>"
+        + ("".join(fiches) or "<li class=vide>Aucun carnet.</li>")
         + "</ul></main>"
     )
-    return _page("Kalendra — agendas", corps)
+    return _page("Kalendra — agendas et carnets", corps)
 
 
-def rendre_objet(config, calendar_row, user: str, row, tz) -> Response:
+def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Response:
+    """Liste des cartes d'un carnet, triées par nom affiché."""
+    base = config.base_path
+    nom = carnet_row["name"]
+    titre = carnet_row["display_name"] or nom
+
+    fiches = []
+    for row in db.list_objects(carnet_row["id"]):
+        try:
+            card = parse_vcard(row["data"])
+        except InvalidCardData:
+            # Carte illisible : on l'affiche quand même, sous son href — la
+            # masquer donnerait l'illusion qu'elle n'existe pas.
+            card = None
+        affiche = (card.fn if card and card.fn else "") or row["summary"] or row["href"]
+        fiches.append((affiche, card.email if card else "", row["href"]))
+
+    # Tri sur le nom affiché, insensible à la casse et aux accents près : sans
+    # clé explicite on trierait le HTML, donc l'ordre des href.
+    fiches.sort(key=lambda f: f[0].casefold())
+
+    lignes = []
+    for affiche, courriel, href in fiches:
+        cible = f"{base}/view/contacts/{quote(user)}/{quote(nom)}/{quote(href)}"
+        lignes.append(
+            "<tr>"
+            f"<td><a href='{cible}'>{escape(affiche)}</a></td>"
+            f"<td class=muted>{escape(courriel)}</td>"
+            "</tr>"
+        )
+
+    corps = (
+        "<header>"
+        "<span class=pastille style='background:"
+        f"{escape(carnet_row['color'] or '#3584e4')}'></span>"
+        f"<h1>{escape(titre)}</h1>"
+        f"<nav><a href='{base}/view/'>agendas</a>"
+        f"{_lien_admin(base, admin)}</nav></header>"
+        "<main><table class=grille style='table-layout:auto'>"
+        "<tr><th>Nom</th><th>Courriel</th></tr>"
+        + (
+            "".join(lignes)
+            or "<tr><td colspan=2 class=vide>Ce carnet est vide.</td></tr>"
+        )
+        + "</table></main>"
+        f"<footer>{len(lignes)} contact{'s' if len(lignes) > 1 else ''} · "
+        "vue en lecture seule : pour modifier une fiche, utilisez votre client "
+        "CardDAV.</footer>"
+    )
+    return _page(f"{titre} — contacts", corps)
+
+
+def rendre_contact(config, carnet_row, user: str, row, admin: bool = False) -> Response:
+    """Détail d'une carte : les propriétés courantes, puis la source brute."""
+    base = config.base_path
+    nom = carnet_row["name"]
+    try:
+        card = parse_vcard(row["data"])
+    except InvalidCardData:
+        card = None
+
+    titre = (card.fn if card and card.fn else "") or row["summary"] or "(sans nom)"
+
+    lignes: list[tuple[str, str]] = []
+    if card is not None:
+        for etiquette, prop in (
+            ("Courriel", "EMAIL"),
+            ("Téléphone", "TEL"),
+            ("Adresse", "ADR"),
+            ("Organisation", "ORG"),
+            ("Fonction", "TITLE"),
+            ("Anniversaire", "BDAY"),
+            ("Note", "NOTE"),
+            ("Site", "URL"),
+        ):
+            # Une carte peut porter plusieurs fois la même propriété (deux
+            # téléphones, trois adresses) : on les affiche toutes.
+            for valeur in card.all(prop):
+                texte = valeur.text.replace(";", " ").strip()
+                if texte:
+                    type_ = valeur.param("TYPE")
+                    suffixe = f" ({type_.lower()})" if type_ else ""
+                    lignes.append((etiquette + suffixe, texte))
+        if card.uid:
+            lignes.append(("Identifiant", card.uid))
+    lignes.append(("ETag", row["etag"]))
+
+    definitions = "".join(
+        f"<dt>{escape(etiquette)}</dt><dd>{escape(valeur)}</dd>" for etiquette, valeur in lignes
+    )
+    retour = f"{base}/view/contacts/{quote(user)}/{quote(nom)}/"
+
+    corps = (
+        f"<header><h1>{escape(titre)}</h1>"
+        f"<nav><a href='{retour}'>← retour au carnet</a>"
+        f"<a href='{base}/view/'>agendas</a>"
+        f"{_lien_admin(base, admin)}</nav></header>"
+        f"<main><section class=detail><h2>{escape(titre)}</h2><dl>{definitions}</dl>"
+        f"<pre>{escape(row['data'])}</pre></section></main>"
+        "<footer>Contenu affiché tel qu'il est stocké : Kalendra ne réécrit jamais "
+        "une carte de visite.</footer>"
+    )
+    return _page(titre, corps)
+
+
+def rendre_objet(config, calendar_row, user: str, row, tz, admin: bool = False) -> Response:
     base = config.base_path
     nom = calendar_row["name"]
     try:
         composants = [
             c for c in parse_calendar(row["data"]).children if c.name in {"VEVENT", "VTODO"}
         ]
-    except Exception:  # noqa: BLE001 - un objet illisible reste consultable en brut
+    except Exception:
         composants = []
 
     principal = composants[0] if composants else None
@@ -380,13 +627,15 @@ def rendre_objet(config, calendar_row, user: str, row, tz) -> Response:
         for etiquette, valeur in lignes
     )
     retour = _lien_mois(
-        base, user, nom, (debut or datetime.now(timezone.utc)).year,
-        (debut or datetime.now(timezone.utc)).month,
+        base, user, nom, (debut or datetime.now(UTC)).year,
+        (debut or datetime.now(UTC)).month,
     )
 
     corps = (
         f"<header><h1>{escape(resume)}</h1>"
-        f"<nav><a href='{retour}'>← retour au mois</a></nav></header>"
+        f"<nav><a href='{retour}'>← retour au mois</a>"
+        f"<a href='{base}/view/'>agendas</a>"
+        f"{_lien_admin(base, admin)}</nav></header>"
         f"<main><section class=detail><h2>{escape(resume)}</h2><dl>{definitions}</dl>"
         f"<pre>{escape(row['data'])}</pre></section></main>"
         "<footer>Contenu affiché tel qu'il est stocké : Kalendra ne réécrit jamais "
@@ -398,17 +647,211 @@ def rendre_objet(config, calendar_row, user: str, row, tz) -> Response:
 # ------------------------------------------------------------------ routage
 
 
-def handle_view(db, config, request: Request, segments: list[str]) -> Response:
-    """Point d'entrée : `segments` exclut le préfixe `view`."""
-    if request.method not in {"GET", "HEAD"}:
-        return error(405, "Vue en lecture seule.").header("Allow", "GET, HEAD")
+def _importer(
+    db, config, request: Request, user_row, admin: bool, segments: list[str], token: str
+) -> Response:
+    """Reçoit un .ics téléversé et le dépose dans l'agenda visé.
 
+    Chaque utilisateur importe dans ses propres agendas ; un administrateur
+    peut le faire pour n'importe quel compte, comme partout dans cette vue.
+    """
+    resource = resolve(db, ["calendars", *segments], "/" + "/".join(segments))
+    if resource.kind != Kind.CALENDAR or resource.calendar is None:
+        return error(404, "Agenda introuvable.")
+    if not admin and resource.user["id"] != user_row["id"]:
+        return error(403, "Cet agenda ne vous appartient pas.")
+
+    champs = parse_multipart(request.body, request.header("content-type"))
+    fourni = champs.get("csrf", b"").decode("utf-8", "replace")
+    if not csrf_valid(db.secret_key(), user_row["username"], fourni):
+        return error(403, "Jeton CSRF invalide.")
+
+    brut = champs.get("fichier", b"")
+    if not brut:
+        return _rediriger(config, segments, "Aucun fichier reçu.")
+
+    rapport = importer(
+        db,
+        resource.calendar,
+        brut.decode("utf-8", "replace"),
+        max_taille=config.max_resource_size,
+    )
+    message = rapport.resume()
+    if rapport.erreurs:
+        # On ne montre que les premières : un fichier bancal en produirait des
+        # centaines, illisibles dans un bandeau.
+        apercu = " ".join(rapport.erreurs[:3])
+        reste = len(rapport.erreurs) - 3
+        message += f" ({apercu}" + (f" … +{reste}" if reste > 0 else "") + ")"
+    return _rediriger(config, segments, message)
+
+
+#: Même jeu de caractères que `SAFE_HREF` côté DAV, en plus restrictif : ces
+#: noms deviennent un segment d'URL CalDAV, et le pattern HTML du formulaire ne
+#: protège rien contre un POST direct.
+NOM_AGENDA = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _champs_formulaire(request: Request) -> tuple[dict[str, str], bytes]:
+    """Champs d'un formulaire, quel que soit son encodage.
+
+    Renvoie les champs texte et, séparément, le fichier éventuel : celui-ci
+    reste en octets car un .ics doit être stocké tel qu'il a été déposé.
+    """
+    type_contenu = request.header("content-type")
+    if type_contenu.split(";")[0].strip().lower() == "multipart/form-data":
+        brut = parse_multipart(request.body, type_contenu)
+        fichier = brut.pop("fichier", b"")
+        return {c: v.decode("utf-8", "replace") for c, v in brut.items()}, fichier
+    champs = {
+        cle: valeurs[0]
+        for cle, valeurs in parse_qs(request.text, keep_blank_values=True).items()
+    }
+    return champs, b""
+
+
+def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: str) -> Response:
+    """Création d'un agenda par son propriétaire, depuis `/view/`."""
+    champs, fichier = _champs_formulaire(request)
+    if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
+        return error(403, "Jeton CSRF invalide.")
+
+    # Un administrateur peut créer pour autrui ; un compte ordinaire, seulement
+    # pour lui-même — même règle que partout dans cette vue.
+    cible = champs.get("proprietaire", "").strip() or user_row["username"]
+    if cible != user_row["username"] and not admin:
+        return _rediriger_index(config, "Vous ne pouvez créer un agenda que pour vous-même.")
+    proprietaire = db.get_user(cible)
+    if proprietaire is None:
+        return _rediriger_index(config, "Compte inconnu.")
+
+    nom = champs.get("name", "").strip()
+    if not NOM_AGENDA.match(nom):
+        return _rediriger_index(
+            config, "Nom invalide : lettres, chiffres, point, tiret ou souligné, 64 au plus."
+        )
+    if db.get_calendar(proprietaire["id"], nom) is not None:
+        return _rediriger_index(config, f"Un agenda « {nom} » existe déjà.")
+
+    couleur = champs.get("color", "#3584e4").strip()[:9] or "#3584e4"
+    calendar_id = db.create_calendar(
+        proprietaire["id"],
+        nom,
+        display_name=champs.get("display_name", "").strip() or nom,
+        color=couleur,
+    )
+
+    if not fichier:
+        return _rediriger_index(config, f"Agenda « {nom} » créé.")
+
+    # Créer puis importer en une fois : c'est le geste courant pour un
+    # calendrier externe, qui mérite son propre agenda.
+    rapport = importer(
+        db,
+        db.get_calendar_by_id(calendar_id),
+        fichier.decode("utf-8", "replace"),
+        max_taille=config.max_resource_size,
+    )
+    if rapport.total == 0:
+        # Un agenda vide créé par une importation ratée n'a pas de raison de
+        # rester : on le retire pour ne pas laisser de trace d'un échec.
+        db.delete_calendar(calendar_id)
+        detail = rapport.erreurs[0] if rapport.erreurs else "aucun événement trouvé"
+        return _rediriger_index(config, f"Import impossible : {detail}")
+    return _rediriger_index(config, f"Agenda « {nom} » créé — {rapport.resume()}")
+
+
+def _supprimer_agenda(
+    db, config, request: Request, user_row, admin: bool, segments: list[str], token: str
+) -> Response:
+    """Suppression d'un agenda et de tout son contenu."""
+    champs, _ = _champs_formulaire(request)
+    if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
+        return error(403, "Jeton CSRF invalide.")
+
+    resource = resolve(db, ["calendars", *segments], "/" + "/".join(segments))
+    if resource.kind != Kind.CALENDAR or resource.calendar is None:
+        return error(404, "Agenda introuvable.")
+    if not admin and resource.user["id"] != user_row["id"]:
+        return error(403, "Cet agenda ne vous appartient pas.")
+
+    nom = resource.calendar["display_name"] or resource.calendar["name"]
+    compte = db.calendar_stats(resource.calendar["id"])
+    db.delete_calendar(resource.calendar["id"])
+    return _rediriger_index(
+        config, f"Agenda « {nom} » supprimé ({compte} objet(s) perdus)."
+    )
+
+
+def _rediriger_index(config, message: str) -> Response:
+    cible = f"{config.base_path}/view/?msg={quote(message)}"
+    return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
+
+
+def _rediriger(config, segments: list[str], message: str) -> Response:
+    cible = (
+        f"{config.base_path}/view/{quote(segments[0])}/{quote(segments[1])}/"
+        f"?msg={quote(message)}"
+    )
+    return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
+
+
+def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Response:
+    """Routage sous `/view/contacts/` : carnet, puis carte."""
+    if len(segments) < 2:
+        return error(404, "Carnet introuvable.")
+
+    resource = resolve(db, ["addressbooks", *segments], "/" + "/".join(segments))
+    if resource.kind not in {Kind.CALENDAR, Kind.OBJECT} or resource.calendar is None:
+        return error(404, "Carnet introuvable.")
+    if not admin and resource.user["id"] != user_row["id"]:
+        return error(403, "Ce carnet ne vous appartient pas.")
+
+    if resource.kind == Kind.OBJECT:
+        return rendre_contact(
+            config, resource.calendar, resource.user["username"], resource.obj, admin
+        )
+    return rendre_carnet(
+        db, config, resource.calendar, resource.user["username"], admin
+    )
+
+
+def handle_view(
+    db, config, request: Request, segments: list[str], token: str = ""
+) -> Response:
+    """Point d'entrée : `segments` exclut le préfixe `view`."""
     user_row = request.user
     admin = bool(user_row["is_admin"])
     tz = None  # None = fuseau local du serveur (variable TZ du conteneur)
 
+    # Trois actions écrivent : import, création et suppression d'agenda. Tout
+    # le reste de la vue est en lecture seule.
+    if request.method == "POST":
+        if len(segments) == 3 and segments[2] == "import":
+            return _importer(db, config, request, user_row, admin, segments[:2], token)
+        if segments == ["agendas", "creer"]:
+            return _creer_agenda(db, config, request, user_row, admin, token)
+        if len(segments) == 3 and segments[2] == "supprimer":
+            return _supprimer_agenda(
+                db, config, request, user_row, admin, segments[:2], token
+            )
+        return error(405, "Vue en lecture seule.").header("Allow", "GET, HEAD")
+
+    if request.method not in {"GET", "HEAD"}:
+        return error(405, "Vue en lecture seule.").header("Allow", "GET, HEAD, POST")
+
     if not segments:
-        return rendre_index(db, config, user_row, admin)
+        return rendre_index(
+            db, config, user_row, admin, token, request.query_param("msg")
+        )
+
+    # Les contacts vivent sous un préfixe dédié : un nom d'agenda et un nom de
+    # carnet peuvent être identiques, il faut donc lever l'ambiguïté par l'URL.
+    # Rien n'interdit en revanche un compte nommé « contacts » : on ne prend
+    # cette branche que si le segment suivant désigne un utilisateur, sans quoi
+    # /view/contacts/<agenda>/ cesserait d'atteindre les agendas de ce compte.
+    if segments[0] == "contacts" and len(segments) > 1 and db.get_user(segments[1]) is not None:
+        return _vue_contacts(db, config, user_row, admin, segments[1:])
 
     if len(segments) < 2:
         return error(404, "Agenda introuvable.")
@@ -420,7 +863,9 @@ def handle_view(db, config, request: Request, segments: list[str]) -> Response:
         return error(403, "Cet agenda ne vous appartient pas.")
 
     if resource.kind == Kind.OBJECT:
-        return rendre_objet(config, resource.calendar, resource.user["username"], resource.obj, tz)
+        return rendre_objet(
+            config, resource.calendar, resource.user["username"], resource.obj, tz, admin
+        )
 
     aujourdhui = datetime.now(tz).date() if tz else datetime.now().date()
     annee, mois = parse_mois(request.query_param("m"), aujourdhui)
@@ -435,4 +880,7 @@ def handle_view(db, config, request: Request, segments: list[str]) -> Response:
         tz,
         semaines,
         aujourdhui,
+        admin,
+        token,
+        request.query_param("msg"),
     )
