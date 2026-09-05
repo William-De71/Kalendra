@@ -1,0 +1,53 @@
+name: Rapport de bogue
+description: Signaler un dysfonctionnement du serveur ou d'un client
+labels: ["bogue"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Sortie de `docker run --rm ghcr.io/OWNER/kalendra --version`
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client concerné
+      options:
+        - GNOME Evolution
+        - Thunderbird
+        - DAVx5 (Android)
+        - iOS / macOS Calendar
+        - Apple Reminders
+        - Abonnement ICS (Google Calendar)
+        - Abonnement ICS (Proton Calendar)
+        - Autre / aucun (appel HTTP direct)
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Étapes de reproduction
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportement attendu / observé
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Journaux
+      description: Sortie de `docker logs kalendra` (retirez toute donnée personnelle)
+      render: shell

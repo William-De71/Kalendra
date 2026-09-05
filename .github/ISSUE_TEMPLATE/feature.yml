@@ -1,0 +1,24 @@
+name: Demande d'évolution
+description: Proposer une fonctionnalité ou une amélioration
+labels: ["évolution"]
+body:
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Besoin
+      description: Quel problème concret cette évolution résout-elle ?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposition
+    attributes:
+      label: Proposition
+    validations:
+      required: true
+
+  - type: input
+    id: rfc
+    attributes:
+      label: Référence normative
+      description: RFC ou section concernée, le cas échéant (RFC 4791, 5545, 6578…)

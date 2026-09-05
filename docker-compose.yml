@@ -1,0 +1,33 @@
+services:
+  kalendra:
+    # Pour utiliser l'image publiée plutôt que la construire localement :
+    #   image: ghcr.io/OWNER/kalendra:1
+    build: .
+    image: kalendra:local
+    container_name: kalendra
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5232:5232"
+    volumes:
+      - kalendra-data:/data
+    environment:
+      # Compte administrateur créé au tout premier démarrage uniquement.
+      KALENDRA_ADMIN_USER: "${KALENDRA_ADMIN_USER:-admin}"
+      KALENDRA_ADMIN_PASSWORD: "${KALENDRA_ADMIN_PASSWORD:?definissez KALENDRA_ADMIN_PASSWORD dans .env}"
+      # URL publique, telle que vue par les clients (sert aux URLs affichées).
+      KALENDRA_PUBLIC_URL: "${KALENDRA_PUBLIC_URL:-http://localhost:5232}"
+      KALENDRA_LOG_LEVEL: "info"
+      TZ: "${TZ:-Europe/Paris}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5232/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  kalendra-data:
