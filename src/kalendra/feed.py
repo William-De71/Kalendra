@@ -1,10 +1,10 @@
-"""Flux ICS publics en lecture seule.
+"""Public read-only ICS feeds.
 
-Google Calendar et Proton Calendar ne savent pas se connecter à un serveur
-CalDAV tiers : ils ne consomment qu'une URL iCalendar en lecture seule. Ce
-module expose donc chaque agenda sous ``/feed/<jeton>.ics``, protégé par un
-jeton aléatoire révocable plutôt que par une authentification HTTP (ces
-services ne présentent aucun identifiant).
+Google Calendar and Proton Calendar cannot connect to a third-party CalDAV
+server: they only consume a read-only iCalendar URL. This module therefore
+exposes every calendar under ``/feed/<token>.ics``, protected by a revocable
+random token rather than HTTP authentication (those services present no
+credentials at all).
 """
 
 from __future__ import annotations

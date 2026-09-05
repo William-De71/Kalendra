@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Calcule la version suivante et met à jour les fichiers qui la portent.
+"""Compute the next version and update the files that carry it.
 
     scripts/bump-version.py patch|minor|major [--dry-run]
 
-Sert au workflow « Préparer une version » : GitHub ne connaît que le niveau
-choisi (patch, minor, major), c'est ici qu'on en déduit le numéro et qu'on
-réécrit `__init__.py` et `CHANGELOG.md`.
+Serves the "Prepare a release" workflow: GitHub only knows the chosen level
+(patch, minor, major), and this is where the number is derived and
+`__init__.py`, `pyproject.toml` and `CHANGELOG.md` are rewritten.
 
-Un script plutôt que du shell dans le workflow : la manipulation du journal des
-modifications demande de déplacer une section entière, ce qui est illisible en
-`sed` et impossible à tester hors de GitHub.
+A script rather than shell inside the workflow: reshaping the changelog means
+moving a whole section, which is unreadable in `sed` and impossible to test
+outside GitHub.
 
-Le script n'appelle jamais git : il prépare les fichiers, et c'est au workflow
-(ou à l'utilisateur) de committer et d'étiqueter.
+The script never calls git: it prepares the files, and it is up to the workflow
+(or the user) to commit and tag.
 """
 
 from __future__ import annotations
@@ -29,9 +29,9 @@ CHANGELOG = RACINE / "CHANGELOG.md"
 PYPROJECT = RACINE / "pyproject.toml"
 
 VERSION_RE = re.compile(r'^__version__ = "(\d+)\.(\d+)\.(\d+)"$', re.MULTILINE)
-#: `pyproject.toml` porte la version en dur, séparément de `__init__.py` : les
-#: deux doivent bouger ensemble, sans quoi la roue publiée annoncerait un
-#: numéro différent de celui que le serveur affiche.
+#: `pyproject.toml` carries the version hard-coded, separately from
+#: `__init__.py`: both must move together, otherwise the published wheel would
+#: announce a different number from the one the server reports.
 PYPROJECT_RE = re.compile(r'^version = "(\d+\.\d+\.\d+)"$', re.MULTILINE)
 
 
@@ -40,8 +40,8 @@ def version_courante() -> tuple[int, int, int]:
     if trouve is None:
         raise SystemExit(f"__version__ introuvable ou mal formé dans {INIT}")
 
-    # Les deux fichiers doivent déjà s'accorder : partir d'un dépôt incohérent
-    # ne ferait que propager l'écart à la version suivante.
+    # Both files must already agree: starting from an inconsistent repository
+    # would only carry the discrepancy into the next version.
     dans_pyproject = PYPROJECT_RE.search(PYPROJECT.read_text(encoding="utf-8"))
     courante = ".".join(trouve.groups())
     if dans_pyproject is not None and dans_pyproject.group(1) != courante:
@@ -62,7 +62,7 @@ def version_suivante(actuelle: tuple[int, int, int], niveau: str) -> tuple[int, 
 
 
 def _section_non_publiee(texte: str) -> str:
-    """Contenu de « Non publié », sans son titre."""
+    """Contents of the "Unreleased" section, without its heading."""
     debut = texte.find("## [Non publié]")
     if debut < 0:
         return ""
@@ -73,11 +73,11 @@ def _section_non_publiee(texte: str) -> str:
 
 
 def maj_changelog(texte: str, version: str, aujourdhui: str) -> str:
-    """Bascule « Non publié » vers une section datée, et remonte les liens.
+    """Move "Unreleased" into a dated section and update the links.
 
-    Si « Non publié » est vide, on refuse : publier une version sans avoir
-    décrit ce qu'elle change rendrait les notes de release vides, et
-    `release.yml` les extrait telles quelles.
+    An empty "Unreleased" section is refused: publishing a version without
+    describing what it changes would leave the release notes empty, and
+    `release.yml` extracts them verbatim.
     """
     contenu = _section_non_publiee(texte)
     if not contenu.strip():
@@ -98,8 +98,8 @@ def maj_changelog(texte: str, version: str, aujourdhui: str) -> str:
     )
     texte = texte[:debut] + remplacement + texte[fin:]
 
-    # Les liens de comparaison en pied de fichier : « Non publié » repart de la
-    # version qu'on vient de figer, et la nouvelle pointe vers la précédente.
+    # Comparison links at the foot of the file: "Unreleased" now starts from
+    # the version just frozen, and the new one points at the previous one.
     lien_non_publie = re.search(
         r"^\[Non publié\]: (\S+)/compare/v(\d+\.\d+\.\d+)\.\.\.HEAD$", texte, re.MULTILINE
     )
@@ -140,10 +140,10 @@ def main(argv: list[str] | None = None) -> int:
         print(version)
         return 0
 
-    # Tout calculer avant d'écrire quoi que ce soit : `maj_changelog` refuse une
-    # section « Non publié » vide, et une écriture partielle laisserait
-    # `__version__` incrémenté sans section correspondante — exactement
-    # l'incohérence que `release.yml` refuse ensuite de publier.
+    # Compute everything before writing anything: `maj_changelog` rejects an
+    # empty "Unreleased" section, and a partial write would leave `__version__`
+    # bumped without a matching section — exactly the inconsistency
+    # `release.yml` then refuses to publish.
     aujourdhui = datetime.date.today().isoformat()
     nouveau_init = VERSION_RE.sub(
         f'__version__ = "{version}"', INIT.read_text(encoding="utf-8"), count=1

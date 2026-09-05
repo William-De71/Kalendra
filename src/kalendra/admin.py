@@ -1,8 +1,8 @@
-"""Interface web d'administration (inspirée de Baïkal, en beaucoup plus petit).
+"""Web admin interface (inspired by Baïkal, on a much smaller scale).
 
-Protégée par l'authentification HTTP Basic d'un compte `is_admin`. Comme le
-navigateur rejoue automatiquement les identifiants Basic, chaque formulaire
-porte un jeton anti-CSRF dérivé du secret stocké en base.
+Protected by HTTP Basic authentication of an `is_admin` account. Since the
+browser replays Basic credentials automatically, every form carries an
+anti-CSRF token derived from the secret stored in the database.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def _base_url(config, request: Request) -> str:
 
 
 def handle_admin(db, config, request: Request, segments: list[str], token: str) -> Response:
-    """Point d'entrée de l'UI admin ; `segments` exclut le préfixe `admin`."""
+    """Entry point of the admin UI; `segments` excludes the `admin` prefix."""
     if not config.admin_ui:
         return error(404, "Interface d'administration désactivée.")
 
@@ -116,8 +116,8 @@ def handle_admin(db, config, request: Request, segments: list[str], token: str) 
     except Exception as exc:
         message = f"Erreur : {exc}"
 
-    # Après une action sur un compte on revient sur sa fiche plutôt qu'en haut
-    # de la liste : sinon l'admin doit retrouver la ligne à chaque changement.
+    # After an action on an account, return to its page rather than the top of
+    # the list: otherwise the admin hunts for the row after every change.
     cible = "/admin"
     if action not in {"users/create", "users/delete"} and form.get("user_id", "").isdigit():
         cible = f"/admin/users/{form['user_id']}"
@@ -146,12 +146,12 @@ def _apply(db, form: dict[str, str], action: str) -> str:
         if user is None:
             raise ValueError("compte inconnu")
         is_admin = form.get("is_admin") == "on"
-        # Se retirer soi-même l'attribut admin — ou le retirer au dernier admin —
-        # rendrait l'interface inaccessible et la base non administrable.
+        # Removing one's own admin flag — or the last admin's — would lock the
+        # interface out and leave the database unadministrable.
         if user["is_admin"] and not is_admin and db.count_admins() <= 1:
             raise ValueError("il doit rester au moins un administrateur")
-        # On n'écrit que les champs réellement présents dans le formulaire : un
-        # POST partiel ne doit pas effacer un email qu'il ne portait pas.
+        # Only fields actually present in the form are written: a partial POST
+        # must not erase an email address it never carried.
         champs: dict[str, object] = {"is_admin": 1 if is_admin else 0}
         if "display_name" in form:
             champs["display_name"] = form["display_name"].strip() or user["username"]
@@ -220,7 +220,7 @@ def _apply(db, form: dict[str, str], action: str) -> str:
 
 
 def _etat(actif: bool, detail: str) -> str:
-    """Pastille d'état d'un service, verte si actif."""
+    """Service status dot, green when active."""
     if actif:
         return f"<span class='etat on'>●</span> {escape(detail)}"
     return "<span class=etat>●</span> <span class=muted>désactivé</span>"
@@ -278,8 +278,8 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
         f"<td class=muted>URL par agenda, voir ci-dessous</td></tr></table></section>"
     )
 
-    # Filtre côté serveur : sans JavaScript, et il porte aussi sur les comptes
-    # que la pagination du navigateur ne montre pas encore.
+    # Server-side filter: no JavaScript, and it also covers accounts the
+    # browser has not paged into view yet.
     requete = (request.query_param("q") or "").strip().lower()
     if requete:
         users = [
@@ -351,11 +351,10 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
 
 
 def _user_page(db, config, request: Request, token: str, user_id: int) -> Response:
-    """Fiche d'un compte : ses agendas et les actions qui le concernent.
+    """One account's page: its calendars and the actions that concern it.
 
-    Le tableau de bord ne liste plus qu'une ligne par utilisateur ; tout le
-    détail vit ici, sinon la page d'accueil devient illisible passé une
-    poignée de comptes.
+    The dashboard now lists a single row per user; all the detail lives here,
+    otherwise the landing page becomes unreadable past a handful of accounts.
     """
     user = db.get_user_by_id(user_id)
     if user is None:

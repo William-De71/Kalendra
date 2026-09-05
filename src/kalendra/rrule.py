@@ -1,15 +1,15 @@
-"""Expansion des règles de récurrence RFC 5545 (sous-ensemble utile).
+"""RFC 5545 recurrence rule expansion (the useful subset).
 
-Cette implémentation ne sert qu'au filtrage temporel côté serveur
-(`<C:time-range>`) et au calcul des bornes indexées. Elle couvre
-FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY avec INTERVAL, COUNT,
-UNTIL, BYMONTH, BYMONTHDAY, BYDAY (avec position ordinale), BYHOUR,
-BYMINUTE, BYSETPOS et WKST.
+This implementation only serves server-side time filtering (`<C:time-range>`)
+and the computation of indexed bounds. It covers
+FREQ=MINUTELY|HOURLY|DAILY|WEEKLY|MONTHLY|YEARLY with INTERVAL, COUNT, UNTIL,
+BYMONTH, BYMONTHDAY, BYDAY (with ordinal position), BYHOUR, BYMINUTE, BYSETPOS
+and WKST.
 
-En cas de règle non gérée, on préfère renvoyer une expansion « ouverte »
-(récurrence considérée comme infinie) plutôt que de masquer des événements :
-un client CalDAV filtre de toute façon localement, alors qu'un événement
-absent de la réponse est un événement perdu pour l'utilisateur.
+For an unsupported rule, an "open" expansion is preferred (the recurrence is
+treated as infinite) over hiding events: a CalDAV client filters locally
+anyway, whereas an event missing from the response is an event lost to the
+user.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ MAX_OCCURRENCES = 10_000
 
 
 class UnsupportedRule(ValueError):
-    """La règle sort du sous-ensemble géré ; l'appelant doit rester permissif."""
+    """The rule falls outside the supported subset; callers must stay lenient."""
 
 
 def parse_rrule(value: str) -> dict[str, object]:
-    """Décode la valeur d'une propriété RRULE en dictionnaire normalisé."""
+    """Decode an RRULE property value into a normalised dictionary."""
     rule: dict[str, object] = {}
     for chunk in value.replace(" ", "").split(";"):
         if not chunk or "=" not in chunk:
@@ -166,7 +166,7 @@ def _monthly_days(year: int, month: int, rule: dict, base: datetime) -> list[dat
         days.add(min(base.day, last))
 
     if monthdays and bydays:
-        # Intersection : BYDAY restreint les jours du mois retenus.
+        # Intersection: BYDAY narrows which days of the month are kept.
         weekdays = {_parse_byday(token)[1] for token in bydays}
         days = {d for d in days if date(year, month, d).weekday() in weekdays}
 
@@ -176,9 +176,9 @@ def _monthly_days(year: int, month: int, rule: dict, base: datetime) -> list[dat
 def iter_occurrences(
     dtstart: datetime, rule: dict, *, limit: int = MAX_OCCURRENCES, horizon: datetime | None = None
 ) -> Iterator[datetime]:
-    """Produit les occurrences d'une RRULE à partir de `dtstart` (incluse).
+    """Yield the occurrences of an RRULE from `dtstart` (inclusive).
 
-    S'arrête à `limit` occurrences, à `UNTIL`/`COUNT`, ou à `horizon`.
+    Stops at `limit` occurrences, at `UNTIL`/`COUNT`, or at `horizon`.
     """
     freq = str(rule.get("FREQ", "")).upper()
     if freq not in SUPPORTED_FREQ:
@@ -319,7 +319,7 @@ def _parse_until(raw: str, dtstart: datetime) -> datetime | None:
 
 
 def last_occurrence(dtstart: datetime, rule: dict) -> datetime | None:
-    """Dernière occurrence d'une règle bornée, ou None si elle est infinie."""
+    """Last occurrence of a bounded rule, or None when it is infinite."""
     if not rule.get("COUNT") and not rule.get("UNTIL"):
         return None
     last = None

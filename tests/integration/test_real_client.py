@@ -1,15 +1,15 @@
-"""Test d'intégration avec la vraie bibliothèque cliente `caldav`.
+"""Integration test against the real `caldav` client library.
 
-Ce module n'est exécuté qu'en intégration continue, contre un serveur déjà
-démarré (typiquement le conteneur Docker fraîchement construit) :
+This module only runs in CI, against an already-started server (typically the
+freshly built Docker container):
 
     pip install caldav
     KALENDRA_TEST_URL=http://127.0.0.1:5232 \
     KALENDRA_TEST_USER=admin KALENDRA_TEST_PASSWORD=... \
     python -m unittest tests.integration.test_real_client -v
 
-L'intérêt est de valider le serveur avec un client indépendant de notre code,
-qui suit le même chemin de découverte qu'Evolution ou Thunderbird.
+The point is to validate the server with a client independent of our own code,
+following the same discovery path as Evolution or Thunderbird.
 """
 
 from __future__ import annotations

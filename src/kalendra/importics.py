@@ -1,16 +1,16 @@
-"""Import d'un fichier iCalendar dans un agenda existant.
+"""Import of an iCalendar file into an existing calendar.
 
-Un `.ics` publié (vacances scolaires, jours fériés, calendrier d'un club)
-agrège tous ses événements dans un seul `VCALENDAR`, alors que CalDAV impose
-une ressource par événement. On découpe donc le fichier et on dépose un objet
-par composant, en recopiant l'entête et les `VTIMEZONE` dans chacun.
+A published `.ics` (school holidays, public holidays, a club's calendar)
+aggregates all its events into a single `VCALENDAR`, whereas CalDAV requires one
+resource per event. The file is therefore split and one object stored per
+component, copying the header and `VTIMEZONE` blocks into each.
 
-Le contenu n'est pas réécrit au-delà de ce découpage : les propriétés que
-l'analyseur ignore traversent l'import intactes, comme pour un `PUT` normal.
+Content is not rewritten beyond that split: properties the parser ignores pass
+through the import untouched, exactly as with a normal `PUT`.
 
-Cette fonction ne fait aucune requête réseau. Kalendra n'a pas de client HTTP
-sortant : le fichier arrive par le formulaire, jamais par une URL que le
-serveur irait chercher lui-même.
+This function makes no network request. Kalendra has no outbound HTTP client:
+the file arrives through the form, never through a URL the server would fetch
+itself.
 """
 
 from __future__ import annotations
@@ -20,13 +20,13 @@ from dataclasses import dataclass
 from .ics import InvalidCalendarData, parse_object, split_calendar, wrap_component
 from .security import etag_for
 
-#: Garde-fou : au-delà, l'import est refusé plutôt que de bloquer un thread.
+#: Guard rail: beyond this, the import is refused rather than tying up a thread.
 MAX_COMPOSANTS = 5000
 
 
 @dataclass(slots=True)
 class Rapport:
-    """Résultat d'un import, tel qu'affiché à l'utilisateur."""
+    """Outcome of an import, as shown to the user."""
 
     crees: int = 0
     remplaces: int = 0
@@ -55,12 +55,12 @@ class Rapport:
 
 
 def importer(db, calendar_row, contenu: str, *, max_taille: int) -> Rapport:
-    """Dépose chaque composant de `contenu` dans l'agenda `calendar_row`.
+    """Store every component of `contenu` into the `calendar_row` calendar.
 
-    Le nom de ressource dérive de l'UID : réimporter le même fichier met à jour
-    les objets au lieu de les dupliquer. Un composant illisible est signalé et
-    ignoré, sans interrompre le reste — mieux vaut importer 67 événements sur
-    68 que d'échouer entièrement sur une ligne mal formée.
+    The resource name derives from the UID: re-importing the same file updates
+    objects instead of duplicating them. An unreadable component is reported and
+    skipped without stopping the rest — importing 67 events out of 68 beats
+    failing entirely over one malformed line.
     """
     rapport = Rapport()
 
@@ -103,9 +103,9 @@ def importer(db, calendar_row, contenu: str, *, max_taille: int) -> Rapport:
         href = _href_pour(meta.uid, index)
         existant = db.get_object(calendar_row["id"], href)
 
-        # Un UID déjà présent sous un autre nom de ressource viendrait d'un
-        # import antérieur nommé autrement : on écrase cette ressource-là
-        # plutôt que d'en créer une seconde pour le même événement.
+        # A UID already present under another resource name would come from an
+        # earlier import named differently: overwrite that resource rather than
+        # create a second one for the same event.
         conflit = db.get_object_by_uid(calendar_row["id"], meta.uid)
         if conflit is not None and conflit["href"] != href:
             href = conflit["href"]
@@ -132,7 +132,7 @@ def importer(db, calendar_row, contenu: str, *, max_taille: int) -> Rapport:
 
 
 def _href_pour(uid: str, index: int) -> str:
-    """Nom de ressource dérivé de l'UID, filtré sur le jeu sûr de `SAFE_HREF`."""
+    """Resource name derived from the UID, filtered to the safe `SAFE_HREF` set."""
     base = "".join(c if c.isalnum() or c in "._-" else "-" for c in uid).strip("-")
     if not base:
         base = f"import-{index}"

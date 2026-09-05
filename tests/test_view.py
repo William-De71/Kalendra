@@ -1,4 +1,4 @@
-"""Tests de la vue mensuelle en lecture seule."""
+"""Tests for the read-only month view."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ VUE = "/view/will/perso/"
 
 
 def evenements(html: str) -> list[str]:
-    """Titres des puces d'événement, dans l'ordre du document."""
+    """Event chip titles, in document order."""
     return re.findall(r"<a class=evenement [^>]*title='([^']*)'", html)
 
 
@@ -65,7 +65,7 @@ class GrilleTests(unittest.TestCase):
 
 
 class ExpansionTests(unittest.TestCase):
-    """`expand_occurrences` produit les instances, là où `overlaps_range` répond oui/non."""
+    """`expand_occurrences` yields instances, where `overlaps_range` answers yes/no."""
 
     def _unix(self, texte: str) -> int:
         moment = datetime.strptime(texte, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
@@ -169,7 +169,7 @@ class VueMensuelleTests(ServerTestCase):
         self.assertEqual(evenements(html).count("Stand-up"), 4)  # 2, 9, 23, 30 mars
 
     def test_journee_entiere_sur_deux_cases(self):
-        # DTEND est exclusif : le 18 et le 19, pas le 20.
+        # DTEND is exclusive: the 18th and 19th, not the 20th.
         self.assertEqual(evenements(self.mois().text).count("Deplacement Stuttgart"), 2)
 
     def test_mois_vide_ne_montre_rien(self):
@@ -196,8 +196,8 @@ class VueMensuelleTests(ServerTestCase):
                     summary=f"Charge {index}",
                 ),
             )
-        # Le libellé s'accorde en nombre et le regroupement dépend du fuseau
-        # d'affichage : on vérifie la présence du repli, pas sa formulation.
+        # The label agrees in number and the grouping depends on the display
+        # time zone: check that the fold is present, not how it is worded.
         self.assertIn("class=reste", self.mois().text)
 
     def test_lien_vers_le_detail(self):
@@ -270,7 +270,7 @@ class AccesTests(ServerTestCase):
 
 
 class FuseauTests(ServerTestCase):
-    """Une journée entière ne doit jamais glisser d'un jour selon le fuseau."""
+    """An all-day event must never slip by a day depending on the time zone."""
 
     def test_journee_entiere_reste_sur_son_jour(self):
         self.client.put(
@@ -285,7 +285,7 @@ class FuseauTests(ServerTestCase):
         html = self.client.request(
             "GET", f"{VUE}?m=2026-03", headers={"Accept": "text/html"}
         ).text
-        # Le 1er mars 2026 est un dimanche : dernière case de la première semaine.
+        # 1 March 2026 is a Sunday: the last cell of the first week.
         premiere_semaine = html.split("</tr>")[1]
         self.assertIn("Ferie", premiere_semaine)
         self.assertEqual(evenements(html).count("Ferie"), 1)
@@ -308,7 +308,7 @@ if __name__ == "__main__":
 
 
 class ImportTests(ServerTestCase):
-    """Import d'un .ics depuis la vue web, accessible à tout compte."""
+    """Importing an .ics from the web view, available to any account."""
 
     FICHIER = (
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//tests//FR\r\n"
@@ -397,7 +397,7 @@ class ImportTests(ServerTestCase):
 
 
 class GestionAgendaTests(ServerTestCase):
-    """Création et suppression d'agendas par leur propriétaire, depuis /view/."""
+    """Calendar creation and deletion by their owner, from /view/."""
 
     FICHIER = ImportTests.FICHIER
 

@@ -1,4 +1,4 @@
-"""Tests de l'analyseur iCalendar et de l'expansion des récurrences."""
+"""Tests for the iCalendar parser and recurrence expansion."""
 
 from __future__ import annotations
 

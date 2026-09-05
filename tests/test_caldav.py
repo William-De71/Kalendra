@@ -1,4 +1,4 @@
-"""Tests du protocole CalDAV : découverte, écriture, filtres, synchronisation."""
+"""CalDAV protocol tests: discovery, writes, filters, synchronisation."""
 
 from __future__ import annotations
 
@@ -295,7 +295,7 @@ class ReportTests(ServerTestCase):
         self.assertNotIn(f"{PERSO}juin.ics", found)
 
     def test_calendar_query_developpe_les_recurrences(self):
-        # Le stand-up hebdomadaire doit ressortir bien après sa première occurrence.
+        # The weekly stand-up must still surface long after its first occurrence.
         root = self._query("20260601T000000Z", "20260608T000000Z")
         self.assertIn(f"{PERSO}hebdo.ics", hrefs(root))
 

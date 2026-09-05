@@ -1,13 +1,13 @@
-"""Aides XML pour WebDAV/CalDAV : espaces de noms, sérialisation, analyse sûre."""
+"""XML helpers for WebDAV/CalDAV: namespaces, serialisation, safe parsing."""
 
 from __future__ import annotations
 
 import re
 from xml.etree import ElementTree as ET
 
-#: Toute déclaration DTD est refusée : cela neutralise à la fois les entités
-#: externes (XXE) et l'expansion récursive d'entités (« billion laughs »),
-#: sans dépendre d'une bibliothèque tierce.
+#: Any DTD declaration is rejected: this neutralises both external entities
+#: (XXE) and recursive entity expansion ("billion laughs"), without depending
+#: on a third-party library.
 _DOCTYPE = re.compile(rb"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
 
 NS_DAV = "DAV:"
@@ -51,7 +51,7 @@ def element(tag: str, text: str | None = None, **attrib: str) -> ET.Element:
 
 
 def parse_xml(body: bytes) -> ET.Element | None:
-    """Analyse un corps XML en refusant les entités externes. None si vide."""
+    """Parse an XML body, rejecting external entities. None when empty."""
     if not body or not body.strip():
         return None
     if _DOCTYPE.search(body):
@@ -63,7 +63,7 @@ def parse_xml(body: bytes) -> ET.Element | None:
 
 
 def to_bytes(root: ET.Element) -> bytes:
-    """Sérialise un arbre avec déclaration XML."""
+    """Serialise a tree with an XML declaration."""
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 

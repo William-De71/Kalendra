@@ -1,9 +1,9 @@
-"""Analyseur et générateur iCalendar (RFC 5545), sans dépendance externe.
+"""iCalendar parser and generator (RFC 5545), with no external dependency.
 
-On n'extrait que ce dont le serveur a besoin : UID, type de composant, bornes
-temporelles en secondes UTC et récurrence. Le contenu déposé par le client est
-conservé octet pour octet et restitué tel quel — le serveur ne réécrit jamais
-un événement, ce qui évite toute perte d'information à la synchronisation.
+Only what the server needs is extracted: UID, component type, time bounds in
+UTC seconds and recurrence. What the client uploads is stored byte for byte and
+served back unchanged — the server never rewrites an event, which rules out any
+loss of information on sync.
 """
 
 from __future__ import annotations
@@ -15,17 +15,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .rrule import UnsupportedRule, iter_occurrences, last_occurrence, parse_rrule
 
-#: Composants stockables comme ressource CalDAV.
+#: Components storable as a CalDAV resource.
 OBJECT_COMPONENTS = ("VEVENT", "VTODO", "VJOURNAL", "VFREEBUSY")
 
-#: Garde-fou d'expansion lors d'un filtre temporel.
+#: Expansion guard rail during a time-range filter.
 MAX_EXPANSION = 2000
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 DATETIME_MIN = datetime(1, 1, 2, tzinfo=UTC)
 DATETIME_MAX = datetime(9999, 12, 30, tzinfo=UTC)
 
-#: Quelques identifiants de fuseau Microsoft rencontrés chez Outlook/Exchange.
+#: A few Microsoft time-zone identifiers seen from Outlook/Exchange.
 WINDOWS_TZ = {
     "ROMANCE STANDARD TIME": "Europe/Paris",
     "W. EUROPE STANDARD TIME": "Europe/Berlin",
@@ -47,7 +47,7 @@ _DURATION_RE = re.compile(
 
 
 class InvalidCalendarData(ValueError):
-    """Le corps fourni n'est pas une ressource CalDAV exploitable."""
+    """The supplied body is not a usable CalDAV resource."""
 
 
 # ------------------------------------------------------------------- modèle
@@ -64,7 +64,7 @@ class Property:
 
     @property
     def text(self) -> str:
-        """Valeur TEXT déséchappée (RFC 5545 §3.3.11)."""
+        """Unescaped TEXT value (RFC 5545 §3.3.11)."""
         out: list[str] = []
         escaped = False
         for char in self.value:
@@ -106,7 +106,7 @@ class Component:
 
 
 def unfold(text: str) -> list[str]:
-    """Déplie les lignes selon la RFC 5545 §3.1 (continuation par espace/tab)."""
+    """Unfold lines per RFC 5545 §3.1 (continuation by space/tab)."""
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     lines: list[str] = []
     for raw in normalized.split("\n"):
@@ -118,7 +118,7 @@ def unfold(text: str) -> list[str]:
 
 
 def parse_content_line(line: str) -> Property | None:
-    """Découpe `NOM;PARAM=valeur:contenu` en tenant compte des guillemets."""
+    """Split `NAME;PARAM=value:content`, honouring quoted strings."""
     in_quotes = False
     separator = -1
     for index, char in enumerate(line):
@@ -154,7 +154,7 @@ def parse_content_line(line: str) -> Property | None:
 
 
 def parse_calendar(text: str) -> Component:
-    """Construit l'arbre de composants d'un objet iCalendar."""
+    """Build the component tree of an iCalendar object."""
     root: Component | None = None
     stack: list[Component] = []
 
@@ -191,7 +191,7 @@ def parse_calendar(text: str) -> Component:
 
 
 def resolve_timezone(tzid: str) -> timezone | ZoneInfo | None:
-    """Résout un TZID en fuseau utilisable, avec repli sur les noms Windows."""
+    """Resolve a TZID to a usable zone, falling back to Windows names."""
     if not tzid:
         return None
     candidate = tzid.strip().strip('"')
@@ -213,7 +213,7 @@ def resolve_timezone(tzid: str) -> timezone | ZoneInfo | None:
 
 
 def parse_datetime_value(raw: str, tzid: str | None = None) -> datetime | date | None:
-    """Décode une valeur DATE ou DATE-TIME (RFC 5545 §3.3.4 et §3.3.5)."""
+    """Decode a DATE or DATE-TIME value (RFC 5545 §3.3.4 and §3.3.5)."""
     if not raw:
         return None
     value = raw.strip()
@@ -279,7 +279,7 @@ def ical_utc(value: int | datetime) -> str:
 
 
 def parse_range_value(raw: str | None) -> int | None:
-    """Décode l'attribut `start`/`end` d'un `<C:time-range>`."""
+    """Decode the `start`/`end` attribute of a `<C:time-range>`."""
     parsed = parse_datetime_value((raw or "").strip())
     return to_unix(parsed)
 
@@ -295,7 +295,7 @@ def _prop_datetime(component: Component, name: str) -> datetime | date | None:
 
 
 def component_window(component: Component) -> tuple[datetime | None, datetime | None, bool]:
-    """Fenêtre [début, fin) d'une occurrence unique. Le booléen indique « journée entière »."""
+    """Window [start, end) of a single occurrence. The flag marks all-day."""
     start_prop = component.get("DTSTART")
     raw_start = _prop_datetime(component, "DTSTART")
     all_day = raw_start is not None and not isinstance(raw_start, datetime)
@@ -351,7 +351,7 @@ class ObjectMeta:
 
 
 def parse_object(data: str) -> ObjectMeta:
-    """Valide une ressource CalDAV et en extrait les métadonnées indexables."""
+    """Validate a CalDAV resource and extract its indexable metadata."""
     if not data or not data.strip():
         raise InvalidCalendarData("corps vide")
 
@@ -412,7 +412,7 @@ def parse_object(data: str) -> ObjectMeta:
 
 
 def overlaps_range(data: str, start: int | None, end: int | None) -> bool:
-    """Teste précisément la présence d'une occurrence dans [start, end)."""
+    """Test precisely whether an occurrence falls within [start, end)."""
     if start is None and end is None:
         return True
     try:
@@ -461,7 +461,7 @@ def overlaps_range(data: str, start: int | None, end: int | None) -> bool:
 
 
 def text_matches(data: str, component_name: str, prop: str, needle: str, negate: bool) -> bool:
-    """Implémente `<C:text-match>` (comparaison insensible à la casse)."""
+    """Implement `<C:text-match>` (case-insensitive comparison)."""
     try:
         calendar = parse_calendar(data)
     except InvalidCalendarData:
@@ -482,7 +482,7 @@ def text_matches(data: str, component_name: str, prop: str, needle: str, negate:
 
 @dataclass(slots=True)
 class Occurrence:
-    """Une instance concrète d'un objet calendrier, bornée en secondes UTC."""
+    """A concrete instance of a calendar object, bounded in UTC seconds."""
 
     start: int
     end: int
@@ -500,14 +500,14 @@ def expand_occurrences(
     href: str = "",
     limit: int = 400,
 ) -> list[Occurrence]:
-    """Développe un objet en occurrences chevauchant [start, end).
+    """Expand an object into occurrences overlapping [start, end).
 
-    Contrairement à `overlaps_range`, qui répond par oui ou non le plus vite
-    possible pour filtrer une réponse CalDAV, cette fonction produit les
-    instances elles-mêmes : c'est ce qu'il faut pour dessiner un calendrier.
+    Unlike `overlaps_range`, which answers yes or no as fast as it can in order
+    to filter a CalDAV response, this function produces the instances
+    themselves: that is what drawing a calendar requires.
 
-    Les composants portant un `RECURRENCE-ID` remplacent l'occurrence de la
-    série à cette date, comme le prévoit la RFC 5545 §3.8.4.4.
+    Components carrying a `RECURRENCE-ID` override the series occurrence at
+    that date, as RFC 5545 §3.8.4.4 prescribes.
     """
     try:
         calendar = parse_calendar(data)
@@ -580,10 +580,10 @@ def expand_occurrences(
                     continue
                 emit(overrides.get(moment, component), moment, duration)
         except UnsupportedRule:
-            # Règle non gérée : on montre au moins la première occurrence.
+            # Unsupported rule: show at least the first occurrence.
             emit(component, first, duration)
 
-    # Les remplacements peuvent avoir été déplacés hors de la série d'origine.
+    # Overrides may have been moved outside the original series.
     for moment, component in overrides.items():
         if any(o.start == to_unix(moment) for o in results):
             continue
@@ -599,7 +599,7 @@ def expand_occurrences(
 
 
 def fold(line: str) -> str:
-    """Repliage à 75 octets, sans couper un caractère UTF-8 (RFC 5545 §3.1)."""
+    """Fold at 75 bytes without splitting a UTF-8 character (RFC 5545 §3.1)."""
     raw = line.encode("utf-8")
     if len(raw) <= 75:
         return line
@@ -624,7 +624,7 @@ def escape_text(value: str) -> str:
 
 
 def iter_top_level_blocks(text: str) -> list[tuple[str, list[str]]]:
-    """Renvoie les sous-composants de premier niveau, lignes brutes incluses."""
+    """Return top-level sub-components, raw lines included."""
     blocks: list[tuple[str, list[str]]] = []
     depth = 0
     current: list[str] | None = None
@@ -658,10 +658,10 @@ def build_feed(
     refresh_minutes: int,
     prodid: str,
 ) -> str:
-    """Agrège des ressources CalDAV en un VCALENDAR unique publiable.
+    """Aggregate CalDAV resources into a single publishable VCALENDAR.
 
-    Les composants sont recopiés ligne à ligne depuis la ressource d'origine :
-    aucune propriété n'est perdue et les VTIMEZONE sont dédupliqués par TZID.
+    Components are copied line by line from the original resource: no property
+    is lost, and VTIMEZONE blocks are de-duplicated by TZID.
     """
     interval = max(5, int(refresh_minutes))
     lines = [
@@ -704,15 +704,15 @@ def build_feed(
 
     return "\r\n".join([*lines, *timezones, *body, "END:VCALENDAR", ""])
 
-# ------------------------------------------------- découpage pour l'import
+# ------------------------------------------------------ splitting for import
 
 
 def split_calendar(texte: str) -> tuple[list[str], list[str]]:
-    """Sépare le préambule (entête + VTIMEZONE) des blocs VEVENT/VTODO.
+    """Separate the preamble (header + VTIMEZONE) from VEVENT/VTODO blocks.
 
-    On travaille sur les lignes dépliées puis on les replie telles quelles :
-    reconstruire les objets depuis l'arbre analysé les réécrirait, donc
-    perdrait les propriétés que l'analyseur ignore.
+    Work happens on unfolded lines that are then rejoined as-is: rebuilding the
+    objects from the parsed tree would rewrite them, and so lose the properties
+    the parser ignores.
     """
     preambule: list[str] = []
     blocs: list[list[str]] = []

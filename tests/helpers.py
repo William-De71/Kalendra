@@ -1,7 +1,7 @@
-"""Utilitaires de test : application jetable et client HTTP minimal.
+"""Test helpers: a throwaway application and a minimal HTTP client.
 
-La suite n'utilise que `unittest` : elle tourne avec `python -m unittest`
-(sans rien installer) comme sous `pytest` en intégration continue.
+The suite uses `unittest` only: it runs under `python -m unittest` (with
+nothing installed) as well as under `pytest` in CI.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from kalendra.config import Config
 from kalendra.db import Database
 from kalendra.http import Request
 
-# Le coût PBKDF2 de production (~100 ms) rendrait la suite inutilement lente ;
-# l'algorithme testé reste le même, seul le facteur de travail change.
+# The production PBKDF2 cost (~100 ms) would make the suite needlessly slow;
+# the algorithm under test is unchanged, only the work factor differs.
 security.PBKDF2_ITERATIONS = 1_000
 
 EVENT_TEMPLATE = """BEGIN:VCALENDAR
@@ -88,7 +88,7 @@ class Result:
 
 
 class Client:
-    """Invoque directement `Kalendra.dispatch` : rapide, sans socket."""
+    """Call `Kalendra.dispatch` directly: fast, and without a socket."""
 
     def __init__(self, app: Kalendra, username: str | None = None, password: str = "") -> None:
         self.app = app
@@ -141,7 +141,7 @@ class Client:
 
 
 class ServerTestCase(unittest.TestCase):
-    """Base commune : une application neuve, deux comptes, deux agendas."""
+    """Shared base: a fresh application, two accounts, two calendars."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp(prefix="kalendra-test-")

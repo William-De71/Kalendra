@@ -1,4 +1,4 @@
-"""Objets requête/réponse minimalistes, indépendants de tout framework."""
+"""Minimal request/response objects, independent of any framework."""
 
 from __future__ import annotations
 
@@ -92,21 +92,21 @@ def error(status: int, message: str = "") -> Response:
 
 
 def href_quote(path: str) -> str:
-    """Encode un chemin pour l'élément `<D:href>` en gardant les séparateurs."""
+    """Encode a path for the `<D:href>` element, keeping separators intact."""
     return quote(path, safe="/@:+~")
 
 
 def parse_multipart(body: bytes, content_type: str) -> dict[str, bytes]:
-    """Extrait les champs d'un corps `multipart/form-data`.
+    """Extract the fields of a `multipart/form-data` body.
 
-    Écrit à la main plutôt qu'avec la stdlib : `cgi.FieldStorage` a disparu en
-    Python 3.13, et `email.parser` obligerait à reconstruire un message complet
-    pour un formulaire à deux champs. On ne gère donc que ce dont l'interface a
-    besoin — des champs simples et un fichier — et on renvoie les valeurs en
-    octets, sans les décoder : un .ics déposé doit être stocké tel quel.
+    Hand-written rather than taken from the standard library: `cgi.FieldStorage`
+    was removed in Python 3.13, and `email.parser` would mean rebuilding a whole
+    message for a two-field form. So this handles only what the interface needs
+    — plain fields and one file — and returns values as bytes, undecoded: an
+    uploaded .ics must be stored exactly as received.
 
-    Le nom de fichier n'est pas conservé : Kalendra nomme ses ressources
-    d'après l'UID des événements, jamais d'après ce que fournit le client.
+    The filename is discarded: Kalendra names its resources after event UIDs,
+    never after what the client supplies.
     """
     marqueur = "boundary="
     position = content_type.find(marqueur)
@@ -133,7 +133,7 @@ def parse_multipart(body: bytes, content_type: str) -> dict[str, bytes]:
                     if cle.lower() == "name":
                         nom = valeur.strip().strip('"')
         if nom:
-            # Le corps d'une partie se termine par le CRLF qui précède la
-            # frontière suivante : il ne fait pas partie de la donnée.
+            # A part's body ends with the CRLF that precedes the next
+            # boundary: that CRLF is not part of the data.
             champs[nom] = contenu[:-2] if contenu.endswith(b"\r\n") else contenu
     return champs

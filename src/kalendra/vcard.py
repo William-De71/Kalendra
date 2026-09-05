@@ -1,14 +1,13 @@
-"""Analyseur vCard (RFC 6350), sans dépendance externe.
+"""vCard parser (RFC 6350), with no external dependency.
 
-Même parti pris que `ics.py` : on n'extrait que les métadonnées d'index (UID,
-nom affiché, adresse mail) et la carte déposée par le client est conservée
-octet pour octet. Un serveur de stockage n'a pas à avoir d'opinion sur les
-propriétés qu'il ne comprend pas — les réécrire, ce serait les perdre à chaque
-synchronisation.
+Same stance as `ics.py`: only index metadata is extracted (UID, display name,
+email address) and the card the client uploads is kept byte for byte. A storage
+server has no business holding opinions about properties it does not
+understand — rewriting them would mean losing them on every sync.
 
-La syntaxe des lignes de contenu est celle d'iCalendar (`NOM;PARAM=x:valeur`,
-pliage par espace en début de ligne), d'où la réutilisation de `unfold` et
-`parse_content_line` plutôt qu'un second analyseur.
+Content-line syntax is iCalendar's (`NAME;PARAM=x:value`, folding by a leading
+space), hence the reuse of `unfold` and `parse_content_line` rather than a
+second parser.
 """
 
 from __future__ import annotations
@@ -19,12 +18,12 @@ from .ics import Property, parse_content_line, unfold
 
 
 class InvalidCardData(ValueError):
-    """Le corps fourni n'est pas une carte de visite exploitable."""
+    """The supplied body is not a usable vCard."""
 
 
 @dataclass(slots=True)
 class VCard:
-    """Une carte, réduite à ce que le serveur indexe."""
+    """A card, reduced to what the server indexes."""
 
     uid: str
     fn: str
@@ -41,12 +40,12 @@ class VCard:
 
 
 def parse_vcard(text: str) -> VCard:
-    """Analyse une carte et en extrait les métadonnées d'index.
+    """Parse a card and extract its index metadata.
 
-    Lève `InvalidCardData` si le corps n'est pas encadré par BEGIN/END:VCARD.
-    On tolère en revanche l'absence d'UID ou de FN : certains clients anciens
-    n'en mettent pas, et refuser la carte ferait échouer la synchronisation
-    entière pour une propriété que le serveur peut suppléer.
+    Raises `InvalidCardData` when the body is not framed by BEGIN/END:VCARD.
+    A missing UID or FN is tolerated, however: some older clients omit them, and
+    rejecting the card would fail the whole sync over a property the server can
+    supply itself.
     """
     props: dict[str, list[Property]] = {}
     ouvert = False
@@ -74,8 +73,8 @@ def parse_vcard(text: str) -> VCard:
 
     fn = _premier("FN")
     if not fn:
-        # À défaut de FN, reconstituer un nom depuis N (famille;prénom;…) donne
-        # une liste lisible dans l'interface plutôt qu'une ligne vide.
+        # Without FN, rebuilding a name from N (family;given;…) keeps the list
+        # readable in the interface rather than showing an empty row.
         n = props.get("N")
         if n:
             morceaux = [m.strip() for m in n[0].text.split(";")]
@@ -93,11 +92,11 @@ def parse_vcard(text: str) -> VCard:
 
 
 def card_matches(card: VCard, texte: str) -> bool:
-    """Recherche plein texte naïve sur les propriétés indexées.
+    """Naive full-text search over the indexed properties.
 
-    Sert au REPORT `addressbook-query` avec un filtre non exprimable en SQL :
-    en cas de doute on renvoie la carte plutôt que de la masquer, comme pour
-    les récurrences non expansées côté calendrier.
+    Serves the `addressbook-query` REPORT when the filter cannot be expressed in
+    SQL: when in doubt the card is returned rather than hidden, as with
+    unexpanded recurrences on the calendar side.
     """
     if not texte:
         return True

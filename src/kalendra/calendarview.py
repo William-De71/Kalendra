@@ -1,12 +1,12 @@
-"""Vue mensuelle en lecture seule.
+"""Read-only month view.
 
-Consulter son agenda depuis un navigateur, sans passer par un client. C'est
-volontairement une vue, pas un éditeur : voir la note « Périmètre volontairement
-exclu » dans CLAUDE.md. Aucune écriture n'est possible depuis ces pages, et
-aucun objet calendrier n'est réécrit.
+Consult a calendar from a browser without going through a client. Deliberately
+a view and not an editor: see the "Périmètre volontairement exclu" note in
+CLAUDE.md. Nothing can be written from these pages beyond the import form, and
+no calendar object is ever rewritten.
 
-Le rendu est entièrement fait côté serveur, sans JavaScript ni dépendance :
-un tableau HTML de sept colonnes, des liens pour naviguer entre les mois.
+Rendering happens entirely server-side, with no JavaScript and no dependency:
+a seven-column HTML table and links to move between months.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ MOIS = (
 
 JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
-#: Nombre d'événements affichés dans une case avant le repli « +N autres ».
+#: How many events a cell shows before folding into "+N more".
 MAX_PAR_JOUR = 4
 
 STYLE = """
@@ -152,7 +152,7 @@ def mois_suivant(annee: int, mois: int) -> tuple[int, int]:
 
 
 def parse_mois(raw: str, defaut: date) -> tuple[int, int]:
-    """Décode le paramètre `m=AAAA-MM`, en repliant sur le mois par défaut."""
+    """Decode the `m=YYYY-MM` parameter, falling back to the default month."""
     try:
         annee, _, mois = raw.partition("-")
         annee_i, mois_i = int(annee), int(mois)
@@ -164,7 +164,7 @@ def parse_mois(raw: str, defaut: date) -> tuple[int, int]:
 
 
 def grille(annee: int, mois: int, aujourdhui: date) -> list[list[Jour]]:
-    """Semaines du mois, commençant le lundi, débords inclus."""
+    """Weeks of the month, starting on Monday, spill-over days included."""
     cal = _calendar.Calendar(firstweekday=0)
     return [
         [
@@ -176,7 +176,7 @@ def grille(annee: int, mois: int, aujourdhui: date) -> list[list[Jour]]:
 
 
 def _local(moment_unix: int, tz: timezone | None) -> datetime:
-    """Convertit un instant UTC vers le fuseau d'affichage du serveur."""
+    """Convert a UTC instant to the server's display time zone."""
     moment = from_unix(moment_unix)
     return moment.astimezone(tz) if tz is not None else moment.astimezone()
 
@@ -184,11 +184,11 @@ def _local(moment_unix: int, tz: timezone | None) -> datetime:
 def remplir(
     db, calendar_row, semaines: list[list[Jour]], tz: timezone | None
 ) -> None:
-    """Place les occurrences dans les cases de la grille.
+    """Place occurrences into the grid cells.
 
-    La fenêtre interrogée déborde d'un jour de chaque côté : un événement
-    peut commencer la veille en UTC et tomber dans la grille une fois converti
-    dans le fuseau d'affichage.
+    The queried window overflows by a day on each side: an event may start the
+    previous day in UTC and land inside the grid once converted to the display
+    time zone.
     """
     if not semaines:
         return
@@ -205,12 +205,12 @@ def remplir(
         for occurrence in expand_occurrences(
             row["data"], borne_debut, borne_fin, href=row["href"]
         ):
-            # Une occurrence sans durée occupe malgré tout son jour de début ;
-            # DTEND étant exclusif, on recule d'une seconde pour la dernière case.
+            # A zero-length occurrence still occupies its start day; DTEND
+            # being exclusive, step back a second for the last cell.
             dernier = max(occurrence.end - 1, occurrence.start)
             if occurrence.all_day:
-                # Une journée entière n'a pas d'heure : la convertir vers un
-                # fuseau à l'ouest de Greenwich la ferait basculer la veille.
+                # An all-day event has no time of day: converting it to a zone
+                # west of Greenwich would shift it to the previous day.
                 debut_local = from_unix(occurrence.start).date()
                 fin_locale = from_unix(dernier).date()
             else:
@@ -240,10 +240,10 @@ def _page(titre: str, corps: str) -> Response:
 
 
 def _lien_admin(base: str, admin: bool) -> str:
-    """Retour vers l'UI d'administration, réservé aux administrateurs.
+    """Link back to the admin UI, for administrators only.
 
-    Un simple utilisateur recevrait un 403 sur /admin : mieux vaut ne pas lui
-    montrer la porte que de le laisser s'y cogner.
+    A plain user would get a 403 on /admin: better not to show them the door
+    than to let them walk into it.
     """
     return f"<a href='{base}/admin'>administration</a>" if admin else ""
 
@@ -263,10 +263,10 @@ def _puce(occurrence: Occurrence, base: str, user: str, nom: str, tz) -> str:
 
 
 def _formulaire_import(base: str, user: str, nom: str, token: str) -> str:
-    """Dépôt d'un .ics dans l'agenda affiché.
+    """Upload an .ics into the displayed calendar.
 
-    Replié dans un <details> : c'est une action ponctuelle, elle n'a pas à
-    occuper l'écran sous la grille à chaque consultation.
+    Folded into a <details>: this is an occasional action, it has no business
+    taking up screen space below the grid on every visit.
     """
     if not token:
         return ""
@@ -399,8 +399,8 @@ def rendre_index(
 
     creation = ""
     if token:
-        # Un administrateur crée pour n'importe quel compte, d'où le sélecteur ;
-        # un utilisateur ordinaire n'a rien à choisir.
+        # An administrator creates for any account, hence the selector; an
+        # ordinary user has nothing to choose.
         if admin:
             options = "".join(
                 f"<option value='{escape(u['username'])}'>{escape(u['username'])}</option>"
@@ -458,7 +458,7 @@ def rendre_index(
 
 
 def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Response:
-    """Liste des cartes d'un carnet, triées par nom affiché."""
+    """List an address book's cards, sorted by display name."""
     base = config.base_path
     nom = carnet_row["name"]
     titre = carnet_row["display_name"] or nom
@@ -468,14 +468,14 @@ def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Res
         try:
             card = parse_vcard(row["data"])
         except InvalidCardData:
-            # Carte illisible : on l'affiche quand même, sous son href — la
-            # masquer donnerait l'illusion qu'elle n'existe pas.
+            # Unreadable card: show it anyway, under its href — hiding it would
+            # suggest it does not exist.
             card = None
         affiche = (card.fn if card and card.fn else "") or row["summary"] or row["href"]
         fiches.append((affiche, card.email if card else "", row["href"]))
 
-    # Tri sur le nom affiché, insensible à la casse et aux accents près : sans
-    # clé explicite on trierait le HTML, donc l'ordre des href.
+    # Sort on the display name, case-insensitively: without an explicit key we
+    # would sort the HTML, and so the order of hrefs.
     fiches.sort(key=lambda f: f[0].casefold())
 
     lignes = []
@@ -510,7 +510,7 @@ def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Res
 
 
 def rendre_contact(config, carnet_row, user: str, row, admin: bool = False) -> Response:
-    """Détail d'une carte : les propriétés courantes, puis la source brute."""
+    """One card in detail: the common properties, then the raw source."""
     base = config.base_path
     nom = carnet_row["name"]
     try:
@@ -532,8 +532,8 @@ def rendre_contact(config, carnet_row, user: str, row, admin: bool = False) -> R
             ("Note", "NOTE"),
             ("Site", "URL"),
         ):
-            # Une carte peut porter plusieurs fois la même propriété (deux
-            # téléphones, trois adresses) : on les affiche toutes.
+            # A card may carry the same property several times (two phone
+            # numbers, three addresses): show them all.
             for valeur in card.all(prop):
                 texte = valeur.text.replace(";", " ").strip()
                 if texte:
@@ -650,10 +650,10 @@ def rendre_objet(config, calendar_row, user: str, row, tz, admin: bool = False) 
 def _importer(
     db, config, request: Request, user_row, admin: bool, segments: list[str], token: str
 ) -> Response:
-    """Reçoit un .ics téléversé et le dépose dans l'agenda visé.
+    """Receive an uploaded .ics and store it into the target calendar.
 
-    Chaque utilisateur importe dans ses propres agendas ; un administrateur
-    peut le faire pour n'importe quel compte, comme partout dans cette vue.
+    Every user imports into their own calendars; an administrator may do so for
+    any account, as everywhere else in this view.
     """
     resource = resolve(db, ["calendars", *segments], "/" + "/".join(segments))
     if resource.kind != Kind.CALENDAR or resource.calendar is None:
@@ -678,25 +678,25 @@ def _importer(
     )
     message = rapport.resume()
     if rapport.erreurs:
-        # On ne montre que les premières : un fichier bancal en produirait des
-        # centaines, illisibles dans un bandeau.
+        # Only the first few are shown: a broken file would produce hundreds,
+        # unreadable in a banner.
         apercu = " ".join(rapport.erreurs[:3])
         reste = len(rapport.erreurs) - 3
         message += f" ({apercu}" + (f" … +{reste}" if reste > 0 else "") + ")"
     return _rediriger(config, segments, message)
 
 
-#: Même jeu de caractères que `SAFE_HREF` côté DAV, en plus restrictif : ces
-#: noms deviennent un segment d'URL CalDAV, et le pattern HTML du formulaire ne
-#: protège rien contre un POST direct.
+#: Same character set as `SAFE_HREF` on the DAV side, but stricter: these names
+#: become a CalDAV URL segment, and the form's HTML pattern protects nothing
+#: against a direct POST.
 NOM_AGENDA = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def _champs_formulaire(request: Request) -> tuple[dict[str, str], bytes]:
-    """Champs d'un formulaire, quel que soit son encodage.
+    """Fields of a form, whatever its encoding.
 
-    Renvoie les champs texte et, séparément, le fichier éventuel : celui-ci
-    reste en octets car un .ics doit être stocké tel qu'il a été déposé.
+    Returns the text fields and, separately, any uploaded file: that one stays
+    as bytes, since an .ics must be stored exactly as it was uploaded.
     """
     type_contenu = request.header("content-type")
     if type_contenu.split(";")[0].strip().lower() == "multipart/form-data":
@@ -711,13 +711,13 @@ def _champs_formulaire(request: Request) -> tuple[dict[str, str], bytes]:
 
 
 def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: str) -> Response:
-    """Création d'un agenda par son propriétaire, depuis `/view/`."""
+    """Calendar creation by its owner, from `/view/`."""
     champs, fichier = _champs_formulaire(request)
     if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
         return error(403, "Jeton CSRF invalide.")
 
-    # Un administrateur peut créer pour autrui ; un compte ordinaire, seulement
-    # pour lui-même — même règle que partout dans cette vue.
+    # An administrator may create for others; an ordinary account only for
+    # itself — the same rule as everywhere in this view.
     cible = champs.get("proprietaire", "").strip() or user_row["username"]
     if cible != user_row["username"] and not admin:
         return _rediriger_index(config, "Vous ne pouvez créer un agenda que pour vous-même.")
@@ -744,8 +744,8 @@ def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: st
     if not fichier:
         return _rediriger_index(config, f"Agenda « {nom} » créé.")
 
-    # Créer puis importer en une fois : c'est le geste courant pour un
-    # calendrier externe, qui mérite son propre agenda.
+    # Create then import in one go: that is the usual gesture for an external
+    # calendar, which deserves a calendar of its own.
     rapport = importer(
         db,
         db.get_calendar_by_id(calendar_id),
@@ -753,8 +753,8 @@ def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: st
         max_taille=config.max_resource_size,
     )
     if rapport.total == 0:
-        # Un agenda vide créé par une importation ratée n'a pas de raison de
-        # rester : on le retire pour ne pas laisser de trace d'un échec.
+        # An empty calendar left behind by a failed import has no reason to
+        # stay: remove it rather than leave a trace of the failure.
         db.delete_calendar(calendar_id)
         detail = rapport.erreurs[0] if rapport.erreurs else "aucun événement trouvé"
         return _rediriger_index(config, f"Import impossible : {detail}")
@@ -764,7 +764,7 @@ def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: st
 def _supprimer_agenda(
     db, config, request: Request, user_row, admin: bool, segments: list[str], token: str
 ) -> Response:
-    """Suppression d'un agenda et de tout son contenu."""
+    """Delete a calendar and everything it holds."""
     champs, _ = _champs_formulaire(request)
     if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
         return error(403, "Jeton CSRF invalide.")
@@ -797,7 +797,7 @@ def _rediriger(config, segments: list[str], message: str) -> Response:
 
 
 def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Response:
-    """Routage sous `/view/contacts/` : carnet, puis carte."""
+    """Routing under `/view/contacts/`: address book, then card."""
     if len(segments) < 2:
         return error(404, "Carnet introuvable.")
 
@@ -819,13 +819,13 @@ def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Res
 def handle_view(
     db, config, request: Request, segments: list[str], token: str = ""
 ) -> Response:
-    """Point d'entrée : `segments` exclut le préfixe `view`."""
+    """Entry point: `segments` excludes the `view` prefix."""
     user_row = request.user
     admin = bool(user_row["is_admin"])
     tz = None  # None = fuseau local du serveur (variable TZ du conteneur)
 
-    # Trois actions écrivent : import, création et suppression d'agenda. Tout
-    # le reste de la vue est en lecture seule.
+    # Three actions write: import, calendar creation and calendar deletion.
+    # Everything else in this view is read-only.
     if request.method == "POST":
         if len(segments) == 3 and segments[2] == "import":
             return _importer(db, config, request, user_row, admin, segments[:2], token)
@@ -845,11 +845,11 @@ def handle_view(
             db, config, user_row, admin, token, request.query_param("msg")
         )
 
-    # Les contacts vivent sous un préfixe dédié : un nom d'agenda et un nom de
-    # carnet peuvent être identiques, il faut donc lever l'ambiguïté par l'URL.
-    # Rien n'interdit en revanche un compte nommé « contacts » : on ne prend
-    # cette branche que si le segment suivant désigne un utilisateur, sans quoi
-    # /view/contacts/<agenda>/ cesserait d'atteindre les agendas de ce compte.
+    # Contacts live under a dedicated prefix: a calendar name and an address
+    # book name may be identical, so the URL has to disambiguate. Nothing
+    # forbids an account named "contacts", however: this branch is only taken
+    # when the next segment names a user, otherwise /view/contacts/<calendar>/
+    # would stop reaching that account's calendars.
     if segments[0] == "contacts" and len(segments) > 1 and db.get_user(segments[1]) is not None:
         return _vue_contacts(db, config, user_row, admin, segments[1:])
 

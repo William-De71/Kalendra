@@ -1,4 +1,4 @@
-"""Résolution des propriétés WebDAV/CalDAV pour PROPFIND et REPORT."""
+"""WebDAV/CalDAV property resolution for PROPFIND and REPORT."""
 
 from __future__ import annotations
 
@@ -310,7 +310,7 @@ def sync_token(calendar) -> str:
 
 
 def parse_sync_token(token: str, calendar) -> int | None:
-    """Renvoie la révision contenue dans un jeton, ou None s'il est invalide."""
+    """Return the revision carried by a token, or None when it is invalid."""
     if not token:
         return 0
     prefix = f"urn:kalendra:sync:{calendar['id']}:"
@@ -355,8 +355,8 @@ HANDLERS = {
     ical("calendar-order"): _calendar_order,
 }
 
-#: Propriétés renvoyées pour `<D:allprop>` (RFC 4918 : les propriétés
-#: coûteuses ou spécifiques sont volontairement omises).
+#: Properties returned for `<D:allprop>` (RFC 4918: expensive or
+#: vendor-specific properties are deliberately left out).
 ALLPROP = (
     dav("resourcetype"),
     dav("displayname"),
@@ -377,7 +377,7 @@ ALLPROP = (
 def resolve_props(
     resource: Resource, ctx: PropContext, requested: list[str]
 ) -> tuple[list[ET.Element], list[ET.Element]]:
-    """Renvoie (propriétés trouvées, propriétés absentes) pour une ressource."""
+    """Return (found properties, missing properties) for a resource."""
     found: list[ET.Element] = []
     missing: list[ET.Element] = []
     for qname in requested:

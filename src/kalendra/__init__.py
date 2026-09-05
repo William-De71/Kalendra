@@ -1,4 +1,4 @@
-"""Kalendra — serveur CalDAV autonome sur SQLite."""
+"""Kalendra — standalone CalDAV server on SQLite."""
 
 __version__ = "0.1.0"
 

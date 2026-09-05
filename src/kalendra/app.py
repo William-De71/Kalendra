@@ -1,9 +1,9 @@
-"""Cœur applicatif : authentification et routage, entièrement synchrone.
+"""Application core: authentication and routing, fully synchronous.
 
-`Kalendra.dispatch()` transforme une `Request` en `Response` sans rien savoir
-du transport. Deux adaptateurs l'exposent : `kalendra.server` (serveur HTTP de
-la bibliothèque standard, sans aucune dépendance) et `kalendra.asgi` (uvicorn
-ou gunicorn, si l'on préfère les installer).
+`Kalendra.dispatch()` turns a `Request` into a `Response` while knowing nothing
+about transport. Two adapters expose it: `kalendra.server` (standard-library
+HTTP server, no dependencies at all) and `kalendra.asgi` (uvicorn or gunicorn,
+for those who prefer installing them).
 """
 
 from __future__ import annotations
@@ -31,18 +31,18 @@ logger = logging.getLogger("kalendra")
 
 REALM = 'Basic realm="Kalendra", charset="UTF-8"'
 
-#: Empreinte factice : garantit un coût de vérification identique pour un
-#: compte inexistant, afin de ne pas révéler quels identifiants existent.
+#: Dummy hash: keeps verification cost identical for a non-existent account,
+#: so response timing never reveals which usernames exist.
 DUMMY_HASH = "pbkdf2_sha256$240000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="  # noqa: E501 (empreinte indivisible)
 
 
 class _AuthCache:
-    """Mémorise brièvement les identifiants validés.
+    """Briefly remember verified credentials.
 
-    PBKDF2 coûte volontairement ~100 ms ; or un client CalDAV interroge le
-    serveur en rafale (PROPFIND, REPORT, multiget…). On mémorise donc
-    l'empreinte HMAC du couple identifiant/mot de passe pour une durée courte.
-    Un changement de mot de passe prend effet au plus tard après ce délai.
+    PBKDF2 deliberately costs ~100 ms, yet a CalDAV client queries the server in
+    bursts (PROPFIND, REPORT, multiget and so on). So the HMAC digest of the
+    username/password pair is kept for a short while. A password change takes
+    effect after that delay at the latest.
     """
 
     def __init__(self, ttl: int, capacity: int = 512) -> None:
@@ -85,7 +85,7 @@ class _AuthCache:
 
 
 class Kalendra:
-    """Application CalDAV : DAV, flux ICS publics et interface d'administration."""
+    """CalDAV application: DAV, public ICS feeds and the admin interface."""
 
     def __init__(self, config: Config | None = None, database: Database | None = None) -> None:
         self.config = config or Config.from_env()
@@ -97,7 +97,7 @@ class Kalendra:
     # ------------------------------------------------------------- démarrage
 
     def _bootstrap(self) -> None:
-        """Crée le compte administrateur initial si l'environnement le demande."""
+        """Create the initial administrator account when the environment asks for it."""
         if not self.config.bootstrap_admin or not self.config.bootstrap_password:
             return
         if self.db.get_user(self.config.bootstrap_admin) is not None:
@@ -135,8 +135,8 @@ class Kalendra:
 
         segments = [unquote(part) for part in path.strip("/").split("/") if part]
 
-        # Les flux ICS sont volontairement hors authentification : Google et
-        # Proton ne présentent aucun identifiant. Le jeton fait office de clé.
+        # ICS feeds sit outside authentication on purpose: Google and Proton
+        # present no credentials. The token is the key.
         if segments and segments[0] == "feed":
             token = segments[1] if len(segments) > 1 else ""
             return handle_feed(self.db, self.config, request, token)
@@ -149,9 +149,9 @@ class Kalendra:
         if segments and segments[0] == "view":
             if not self.config.admin_ui:
                 return error(404, "Interface web désactivée.")
-            # Le jeton anti-CSRF sert à l'import : la vue est en lecture seule
-            # partout ailleurs, mais le formulaire de dépôt écrit, et le
-            # navigateur rejoue automatiquement les identifiants Basic.
+            # The anti-CSRF token serves the import: the view is read-only
+            # everywhere else, but the upload form writes, and the browser
+            # replays Basic credentials automatically.
             token = csrf_token(self.db.secret_key(), user["username"])
             return handle_view(self.db, self.config, request, segments[1:], token)
 

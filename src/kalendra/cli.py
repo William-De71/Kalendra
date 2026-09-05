@@ -1,4 +1,4 @@
-"""Interface en ligne de commande : `kalendra serve`, `user`, `calendar`."""
+"""Command-line interface: `kalendra serve`, `user`, `calendar`."""
 
 from __future__ import annotations
 
@@ -278,8 +278,8 @@ def build_parser() -> argparse.ArgumentParser:
     cal_rm.add_argument("name")
     cal_rm.set_defaults(func=cmd_calendar_rm)
 
-    # Pas de sous-commande « token » ici : un carnet n'a pas de flux ICS, ce
-    # format ne transportant que des événements.
+    # No "token" subcommand here: an address book has no ICS feed, that
+    # format carrying events only.
     carnet = sub.add_parser("addressbook", help="gestion des carnets d'adresses").add_subparsers(
         dest="addressbook_command", required=True
     )

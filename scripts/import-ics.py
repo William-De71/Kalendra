@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Importe un fichier .ics dans un agenda Kalendra, un objet par événement.
+"""Import an .ics file into a Kalendra calendar, one object per event.
 
     scripts/import-ics.py --url http://127.0.0.1:5232 --user will \\
-        --calendar vacances --file Zone-B.ics
+        --calendar holidays --file Zone-B.ics
 
-Pourquoi un script et pas une fonctionnalité du serveur : Kalendra n'a aucun
-client HTTP sortant et n'en veut pas. Aller chercher un calendrier ailleurs,
-c'est une dépendance réseau, un cache, une politique de rafraîchissement et des
-erreurs à gérer — tout ce qu'un serveur de stockage n'a pas à porter. L'import
-est donc une action que l'administrateur déclenche, ici ou depuis un cron.
+Why a script rather than a server feature: Kalendra has no outbound HTTP client
+and wants none. Fetching a calendar from elsewhere means a network dependency,
+a cache, a refresh policy and errors to handle — everything a storage server
+has no business carrying. Import is therefore an action the administrator
+triggers, here or from a cron job.
 
-Un fichier .ics public agrège tous ses événements dans un seul VCALENDAR, alors
-que CalDAV impose une ressource par événement : le script découpe, en
-recopiant l'entête VCALENDAR et les VTIMEZONE dans chaque objet produit.
+A public .ics aggregates all its events into a single VCALENDAR, whereas CalDAV
+requires one resource per event: the script splits it, copying the VCALENDAR
+header and the VTIMEZONE blocks into each object produced.
 
-Le contenu n'est pas réécrit au-delà de ce découpage : ni les UID, ni les
-propriétés inconnues ne sont touchés, conformément au principe du serveur.
+Content is not rewritten beyond that split: neither UIDs nor unknown properties
+are touched, in keeping with the server's principle.
 """
 
 from __future__ import annotations
@@ -88,8 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     for index, bloc in enumerate(blocs, start=1):
         objet = wrap_component(preambule, bloc)
         try:
-            # Le premier enfant est le VTIMEZONE recopié du préambule : on
-            # cherche explicitement le composant porteur de l'événement.
+            # The first child is the VTIMEZONE copied from the preamble, so
+            # look explicitly for the component carrying the event.
             composant = next(
                 c
                 for c in parse_calendar(objet).children
@@ -101,8 +101,8 @@ def main(argv: list[str] | None = None) -> int:
             echecs += 1
             continue
 
-        # Le nom de ressource dérive de l'UID : réimporter le même fichier
-        # remplace l'objet au lieu d'en créer un doublon.
+        # The resource name derives from the UID: re-importing the same file
+        # replaces the object instead of creating a duplicate.
         sur = "".join(c if c.isalnum() or c in "._-" else "-" for c in uid)[:200]
         href = f"{args.prefix}{sur}.ics"
 

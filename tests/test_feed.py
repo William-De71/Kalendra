@@ -1,4 +1,4 @@
-"""Tests du flux ICS public (intégration Google Calendar / Proton Calendar)."""
+"""Public ICS feed tests (Google Calendar / Proton Calendar integration)."""
 
 from __future__ import annotations
 

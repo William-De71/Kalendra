@@ -1,4 +1,4 @@
-"""CardDAV : carnets d'adresses, cartes de visite et rapports (RFC 6352)."""
+"""CardDAV: address books, vCards and reports (RFC 6352)."""
 
 from __future__ import annotations
 
@@ -220,7 +220,7 @@ class CarnetTests(ServerTestCase):
 
 
 class VueContactsTests(ServerTestCase):
-    """Vue web en lecture seule des carnets (`/view/contacts/`)."""
+    """Read-only web view of address books (`/view/contacts/`)."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -271,7 +271,7 @@ class VueContactsTests(ServerTestCase):
         self.assertStatus(self.client.request("GET", "/view/contacts/will/zzz/"), 404)
 
     def test_un_compte_nomme_contacts_garde_ses_agendas(self):
-        """Le préfixe /view/contacts/ ne doit pas masquer un compte homonyme."""
+        """The /view/contacts/ prefix must not shadow an account of the same name."""
         uid = self.db.create_user("contacts", "pw")
         self.db.create_calendar(uid, "perso")
         from helpers import Client
@@ -284,13 +284,13 @@ class VueContactsTests(ServerTestCase):
 
 
 class MigrationTests(ServerTestCase):
-    """Une base créée avant CardDAV doit rester exploitable."""
+    """A database created before CardDAV must remain usable."""
 
     def test_un_carnet_peut_porter_le_nom_dun_agenda(self):
-        """L'unicité porte sur (user_id, kind, name), pas sur (user_id, name).
+        """Uniqueness covers (user_id, kind, name), not (user_id, name).
 
-        Les deux vivent dans des arbres d'URL distincts : rien ne justifie
-        qu'un carnet « perso » soit refusé parce qu'un agenda « perso » existe.
+        The two live in distinct URL trees: nothing justifies rejecting a
+        "personal" address book because a "personal" calendar exists.
         """
         self.db.create_addressbook(self.will_id, "perso")
         self.assertIsNotNone(self.db.get_calendar(self.will_id, "perso", "addressbook"))

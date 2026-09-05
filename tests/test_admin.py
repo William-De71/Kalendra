@@ -1,4 +1,4 @@
-"""Tests de l'interface d'administration et du CLI."""
+"""Tests for the admin interface and the CLI."""
 
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ class AdminUITests(ServerTestCase):
         )
 
     def test_tableau_de_bord_liste_les_comptes(self):
-        """La page d'accueil ne porte qu'une ligne par compte.
+        """The landing page carries a single row per account.
 
-        Le détail (URLs CalDAV, flux ICS, actions) vit sur la fiche : c'est ce
-        qui garde la page lisible quand les comptes se multiplient.
+        The detail (CalDAV URLs, ICS feeds, actions) lives on the account page:
+        that is what keeps the list readable as accounts pile up.
         """
         result = self.client.request("GET", "/admin", headers={"Accept": "text/html"})
         self.assertStatus(result, 200)

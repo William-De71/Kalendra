@@ -1,17 +1,17 @@
-"""Arbre de ressources WebDAV et résolution d'URL.
+"""WebDAV resource tree and URL resolution.
 
-    /                                   racine (découverte)
-    /principals/                        collection de principaux
-    /principals/<user>/                 principal
-    /calendars/<user>/                  calendar-home-set
-    /calendars/<user>/<agenda>/         collection calendrier
-    /calendars/<user>/<agenda>/<x>.ics  ressource calendrier
-    /addressbooks/<user>/               addressbook-home-set
-    /addressbooks/<user>/<carnet>/      collection carnet d'adresses
-    /addressbooks/<user>/<carnet>/<x>.vcf  carte de visite
+    /                                     root (discovery)
+    /principals/                          principal collection
+    /principals/<user>/                   principal
+    /calendars/<user>/                    calendar-home-set
+    /calendars/<user>/<calendar>/         calendar collection
+    /calendars/<user>/<calendar>/<x>.ics  calendar resource
+    /addressbooks/<user>/                 addressbook-home-set
+    /addressbooks/<user>/<book>/          address book collection
+    /addressbooks/<user>/<book>/<x>.vcf   vCard resource
 
-Les deux arbres ont la même forme : les carnets d'adresses réutilisent donc
-les mêmes `Kind`, distingués par `Resource.collection_kind`.
+Both trees have the same shape, so address books reuse the same `Kind` values,
+told apart by `Resource.collection_kind`.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class Resource:
     calendar: sqlite3.Row | None = None
     obj: sqlite3.Row | None = None
     name: str = ""
-    #: "calendar" ou "addressbook" — quel arbre a produit cette ressource.
+    #: "calendar" or "addressbook" — which tree produced this resource.
     collection_kind: str = "calendar"
 
     @property
@@ -65,7 +65,7 @@ def principal_path(username: str) -> str:
     return f"/principals/{href_quote(username)}/"
 
 
-#: Racine d'URL de chaque type de collection.
+#: URL root for each collection type.
 RACINE = {"calendar": "calendars", "addressbook": "addressbooks"}
 
 
@@ -85,7 +85,7 @@ def object_path(username: str, calendar_name: str, href: str, kind: str = "calen
 
 
 def resolve(db, segments: list[str], path: str) -> Resource:
-    """Traduit une liste de segments d'URL en ressource."""
+    """Translate a list of URL segments into a resource."""
     if not segments:
         return Resource(Kind.ROOT, "/")
 
@@ -157,7 +157,7 @@ def resolve(db, segments: list[str], path: str) -> Resource:
 
 
 def children(db, resource: Resource) -> list[Resource]:
-    """Enfants directs (Depth: 1)."""
+    """Direct children (Depth: 1)."""
     if resource.kind == Kind.ROOT:
         return [Resource(Kind.PRINCIPALS, "/principals/")]
     if resource.kind == Kind.PRINCIPALS:

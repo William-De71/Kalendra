@@ -1,4 +1,4 @@
-"""Hachage de mots de passe (PBKDF2-HMAC-SHA256, stdlib) et jetons."""
+"""Password hashing (PBKDF2-HMAC-SHA256, stdlib) and tokens."""
 
 from __future__ import annotations
 
@@ -12,11 +12,10 @@ SALT_BYTES = 16
 
 
 def hash_password(password: str, *, iterations: int | None = None) -> str:
-    """Renvoie une empreinte au format ``pbkdf2_sha256$<iters>$<salt_b64>$<dk_b64>``.
+    """Return a digest shaped ``pbkdf2_sha256$<iters>$<salt_b64>$<dk_b64>``.
 
-    Le nombre d'itérations est relu à chaque appel : la suite de tests peut
-    l'abaisser, et les empreintes existantes restent vérifiables puisqu'elles
-    embarquent leur propre paramètre.
+    The iteration count is re-read on every call: the test suite may lower it,
+    and existing digests stay verifiable since they carry their own parameter.
     """
     if not password:
         raise ValueError("le mot de passe ne peut pas être vide")
@@ -31,7 +30,7 @@ def hash_password(password: str, *, iterations: int | None = None) -> str:
 
 
 def verify_password(password: str, encoded: str) -> bool:
-    """Vérifie un mot de passe en temps constant. Ne lève jamais."""
+    """Verify a password in constant time. Never raises."""
     try:
         algo, iters, salt_b64, dk_b64 = encoded.split("$", 3)
         if algo != "pbkdf2_sha256":
@@ -47,7 +46,7 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def new_token(nbytes: int = 24) -> str:
-    """Jeton URL-safe pour les flux ICS publics."""
+    """URL-safe token for public ICS feeds."""
     return secrets.token_urlsafe(nbytes)
 
 
@@ -60,7 +59,7 @@ def csrf_valid(secret: str, username: str, candidate: str) -> bool:
 
 
 def etag_for(data: str | bytes) -> str:
-    """ETag fort (guillemets inclus) calculé sur le contenu."""
+    """Strong ETag (quotes included) computed over the content."""
     if isinstance(data, str):
         data = data.encode("utf-8")
     return '"' + hashlib.sha256(data).hexdigest()[:32] + '"'

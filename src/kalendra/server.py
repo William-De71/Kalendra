@@ -1,13 +1,11 @@
-"""Serveur HTTP de la bibliothèque standard, sans dépendance externe.
+"""Standard-library HTTP server, with no external dependency.
 
-`ThreadingHTTPServer` accepte n'importe quel verbe HTTP, ce qui est
-indispensable ici : PROPFIND, REPORT, MKCALENDAR et PROPPATCH ne figurent
-dans aucune liste blanche de méthodes.
+`ThreadingHTTPServer` accepts any HTTP verb, which is essential here: PROPFIND,
+REPORT, MKCALENDAR and PROPPATCH appear on no method allowlist.
 
-Exposer ce serveur directement sur Internet n'est pas recommandé : placez-le
-derrière un reverse proxy TLS (Caddy, nginx, Traefik). En réseau local ou
-derrière un tunnel, il tient très largement la charge d'un usage personnel ou
-familial.
+Exposing this server straight to the internet is not recommended: put it behind
+a TLS reverse proxy (Caddy, nginx, Traefik). On a local network or behind a
+tunnel it comfortably handles personal or family use.
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ MAX_BODY = 64 * 1024 * 1024
 
 
 class _Handler(BaseHTTPRequestHandler):
-    """Adaptateur générique : tout verbe HTTP est routé vers `dispatch`."""
+    """Generic adapter: every HTTP verb is routed to `dispatch`."""
 
     protocol_version = "HTTP/1.1"
     server_version = f"Kalendra/{__version__}"
@@ -137,7 +135,7 @@ def make_server(application: Kalendra, host: str, port: int) -> KalendraServer:
 
 
 def serve(application: Kalendra, host: str, port: int) -> None:
-    """Démarre le serveur et bloque jusqu'à interruption."""
+    """Start the server and block until interrupted."""
     httpd = make_server(application, host, port)
     logger.info("écoute sur http://%s:%s%s/", host, port, application.config.base_path)
     try:
@@ -152,7 +150,7 @@ def serve(application: Kalendra, host: str, port: int) -> None:
 def serve_in_thread(
     application: Kalendra, host: str = "127.0.0.1", port: int = 0
 ) -> tuple[socketserver.BaseServer, threading.Thread, int]:
-    """Démarre le serveur dans un thread : utilisé par la suite de tests."""
+    """Start the server in a thread: used by the test suite."""
     httpd = make_server(application, host, port)
     thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.1})
     thread.daemon = True

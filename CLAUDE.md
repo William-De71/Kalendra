@@ -222,12 +222,15 @@ cours — les clients referont une synchronisation complète.
 
 ### Commentaires et documentation
 
-En français, et ils expliquent le **pourquoi**, jamais le quoi. Un commentaire
-qui paraphrase la ligne suivante est du bruit ; un commentaire qui dit pourquoi
-on a écarté l'approche évidente vaut de l'or six mois plus tard.
+**En anglais**, comme les identifiants et les messages de commit : le dépôt est
+public et le vocabulaire des RFC est anglais de toute façon (`calendar`,
+`sync_rev`, `href`). Ce fichier et le `README.md` restent en français, tout
+comme l'interface web et les messages d'erreur HTTP — ce que voient les
+utilisateurs.
 
-Les identifiants, eux, restent en anglais (`calendar`, `sync_rev`, `href`) pour
-coller au vocabulaire des RFC.
+Ils expliquent le **pourquoi**, jamais le quoi. Un commentaire qui paraphrase
+la ligne suivante est du bruit ; un commentaire qui dit pourquoi on a écarté
+l'approche évidente vaut de l'or six mois plus tard.
 
 ### Tests
 

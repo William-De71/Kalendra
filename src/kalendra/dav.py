@@ -1,4 +1,4 @@
-"""Implémentation des méthodes WebDAV (RFC 4918) et CalDAV (RFC 4791, 6578)."""
+"""Implementation of WebDAV (RFC 4918) and CalDAV (RFC 4791, 6578) methods."""
 
 from __future__ import annotations
 
@@ -41,8 +41,8 @@ from .xmlutil import (
 
 PRODID = f"-//Kalendra//Kalendra {__version__}//FR"
 
-# `addressbook` doit figurer ici : un client CardDAV qui ne le voit pas dans
-# la réponse OPTIONS conclut que le serveur ne gère pas les contacts.
+# `addressbook` must appear here: a CardDAV client that does not see it in the
+# OPTIONS response concludes the server does not handle contacts.
 DAV_COMPLIANCE = "1, 2, 3, access-control, calendar-access, addressbook, extended-mkcol"
 
 ALLOW_COLLECTION = "OPTIONS, GET, HEAD, PROPFIND, PROPPATCH, REPORT, MKCALENDAR, MKCOL, DELETE"
@@ -97,7 +97,7 @@ def _parse_comp_filter(node: ET.Element) -> CompFilter:
 
 
 def _matches(row, comp: CompFilter) -> bool:
-    """Évalue un `comp-filter` de composant (VEVENT, VTODO…) sur une ligne stockée."""
+    """Evaluate a component `comp-filter` (VEVENT, VTODO…) against a stored row."""
     if comp.is_not_defined:
         return row["component"] != comp.name
     if comp.name and row["component"] != comp.name:
@@ -112,14 +112,14 @@ def _matches(row, comp: CompFilter) -> bool:
             row["data"], comp.name, prop.name, prop.text, negate=prop.negate
         ):
             return False
-    # ex. VEVENT > VALARM : non indexé, on laisse passer
+    # e.g. VEVENT > VALARM: not indexed, so let it through
     return all(
         not (sub.is_not_defined and row["component"] == sub.name) for sub in comp.comps
     )
 
 
 def filter_objects(db, calendar_id: int, root: CompFilter | None) -> list:
-    """Applique un filtre CalDAV, avec pré-sélection SQL puis affinage."""
+    """Apply a CalDAV filter, with SQL pre-selection then refinement."""
     if root is None or root.name != "VCALENDAR":
         return db.list_objects(calendar_id)
 
@@ -171,7 +171,7 @@ def _fill_response(
 
 
 class DavHandler:
-    """Traite une requête déjà authentifiée sur l'arbre CalDAV."""
+    """Handle an already-authenticated request on the CalDAV tree."""
 
     def __init__(self, db, config, user) -> None:
         self.db = db
@@ -378,8 +378,8 @@ class DavHandler:
                 card = parse_vcard(data)
             except InvalidCardData as exc:
                 return self._precondition(carddav("valid-address-data"), str(exc))
-            # Un UID absent est toléré à l'analyse ; ici on lui substitue le nom
-            # de la ressource, seul identifiant dont le serveur soit sûr.
+            # A missing UID is tolerated when parsing; here it is replaced by the
+            # resource name, the only identifier the server can be sure of.
             uid = card.uid or resource.name
             composant, resume = "VCARD", card.fn
             debut = fin = None
@@ -469,8 +469,8 @@ class DavHandler:
                 kind="addressbook" if carnet else "calendar",
             )
         except sqlite3.IntegrityError:
-            # Nom déjà pris pour ce compte et ce type : c'est un conflit, pas
-            # une panne du serveur.
+            # Name already taken for this account and kind: that is a conflict,
+            # not a server failure.
             return error(409, f"Un {quoi} « {resource.name} » existe déjà.")
         return Response(201).header("Content-Length", "0")
 
@@ -556,13 +556,13 @@ class DavHandler:
         if root.tag == carddav("addressbook-query"):
             return self._addressbook_query(request, resource, root)
         if root.tag == carddav("addressbook-multiget"):
-            # Même traitement que son équivalent calendrier : le rapport ne fait
-            # qu'énumérer des href, sans rien interpréter du contenu.
+            # Same handling as its calendar counterpart: the report only
+            # enumerates hrefs, interpreting nothing of the content.
             return self._calendar_multiget(request, resource, root)
         return error(501, f"REPORT {root.tag} non implémenté.")
 
     def _calendar_scope(self, resource: Resource) -> list[Resource]:
-        """Agendas concernés : un seul, ou tous ceux du home-set."""
+        """Calendars in scope: a single one, or every calendar of the home-set."""
         if resource.kind == Kind.CALENDAR:
             return [resource]
         if resource.kind == Kind.HOME:
@@ -618,11 +618,11 @@ class DavHandler:
     def _addressbook_query(
         self, request: Request, resource: Resource, root: ET.Element
     ) -> Response:
-        """REPORT `addressbook-query` (RFC 6352 §8.6).
+        """`addressbook-query` REPORT (RFC 6352 §8.6).
 
-        Le filtre n'est pas traduit en SQL : on applique `card_matches` sur les
-        cartes de la collection. Comme côté calendrier, en cas de doute on
-        renvoie la carte plutôt que de la masquer.
+        The filter is not translated into SQL: `card_matches` is applied to the
+        collection's cards. As on the calendar side, when in doubt the card is
+        returned rather than hidden.
         """
         if resource.kind != Kind.CALENDAR or resource.calendar is None:
             return error(403, "addressbook-query nécessite un carnet d'adresses.")
@@ -642,7 +642,7 @@ class DavHandler:
                 try:
                     card = parse_vcard(row["data"])
                 except InvalidCardData:
-                    # Carte illisible : on la renvoie plutôt que de la perdre.
+                    # Unreadable card: return it rather than lose it.
                     pass
                 else:
                     if not card_matches(card, besoin):
@@ -758,7 +758,7 @@ class DavHandler:
     def _principal_search(
         self, request: Request, resource: Resource, root: ET.Element
     ) -> Response:
-        """Recherche minimale : renvoie le principal courant s'il correspond."""
+        """Minimal search: return the current principal when it matches."""
         requested, allprop, _ = _requested_props(root)
         ms = multistatus()
         if self.user is not None:

@@ -1,11 +1,10 @@
-"""Couche SQLite : schéma, migrations et accès aux données.
+"""SQLite layer: schema, migrations and data access.
 
-Le schéma tient dans quatre tables (`users`, `calendars`, `objects`, `changes`)
-— `calendars` porte aussi les carnets d'adresses CardDAV, distingués par sa
-colonne `kind`, ce qui leur offre gratuitement les révisions de sync —
-plus une table `meta` clé/valeur. Les révisions de synchronisation
-(`calendars.sync_rev`) alimentent à la fois le `getctag` et le `sync-token`
-du REPORT `sync-collection`.
+The schema fits in four tables (`users`, `calendars`, `objects`, `changes`)
+— `calendars` also holds CardDAV address books, told apart by its `kind`
+column, which hands them sync revisions for free — plus a key/value `meta`
+table. Sync revisions (`calendars.sync_rev`) feed both `getctag` and the
+`sync-token` of the `sync-collection` REPORT.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ from .security import hash_password, new_token
 
 SCHEMA_VERSION = 3
 
-#: Définition de `calendars`, partagée entre le schéma initial et la
-#: migration v3 qui reconstruit la table pour élargir son unicité.
+#: Definition of `calendars`, shared between the initial schema and the v3
+#: migration that rebuilds the table to widen its uniqueness constraint.
 SCHEMA_CALENDARS = """CREATE TABLE IF NOT EXISTS calendars (
     id            INTEGER PRIMARY KEY,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -40,10 +39,10 @@ SCHEMA_CALENDARS = """CREATE TABLE IF NOT EXISTS calendars (
     created_at    TEXT    NOT NULL
 );
 
--- L'unicité porte sur (user_id, kind, name) et non sur (user_id, name) : un
--- agenda « perso » et un carnet « perso » sont deux collections distinctes,
--- dans deux arbres d'URL différents. Un index plutôt qu'une contrainte de
--- table, parce que SQLite sait recréer un index, pas modifier une contrainte.
+-- Uniqueness covers (user_id, kind, name) rather than (user_id, name): a
+-- "personal" calendar and a "personal" address book are two distinct
+-- collections in two different URL trees. An index rather than a table
+-- constraint, because SQLite can recreate an index but not alter a constraint.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendars_nom
     ON calendars (user_id, kind, name);
 """
@@ -118,7 +117,7 @@ def http_date(iso: str) -> str:
 
 
 def connect(path: str) -> sqlite3.Connection:
-    """Ouvre une connexion configurée (WAL, clés étrangères, row factory)."""
+    """Open a configured connection (WAL, foreign keys, row factory)."""
     if path != ":memory:":
         directory = os.path.dirname(os.path.abspath(path))
         if directory:
@@ -134,27 +133,27 @@ def connect(path: str) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Crée le schéma et applique les migrations."""
-    # executescript() valide implicitement la transaction en cours : on ne
-    # l'encapsule donc pas dans `transaction()`.
+    """Create the schema and apply migrations."""
+    # executescript() implicitly commits the running transaction, so this is
+    # deliberately not wrapped in `transaction()`.
     conn.executescript(SCHEMA)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < 2:
-        # v2 : les carnets d'adresses partagent les tables des agendas, d'où une
-        # colonne qui distingue les deux. Les bases existantes n'ont que des
-        # agendas, et la valeur par défaut leur convient.
+        # v2: address books share the calendar tables, hence a column telling
+        # the two apart. Existing databases hold calendars only, and the
+        # default value suits them.
         colonnes = {r["name"] for r in conn.execute("PRAGMA table_info(calendars)")}
         if "kind" not in colonnes:
             conn.execute(
                 "ALTER TABLE calendars ADD COLUMN kind TEXT NOT NULL DEFAULT 'calendar'"
             )
     if version < 3:
-        # v3 : l'unicité doit inclure `kind`, sinon un carnet ne peut pas
-        # porter le même nom qu'un agenda du même compte. La contrainte
-        # d'origine vit dans le CREATE TABLE : on reconstruit la table.
-        # `executescript(SCHEMA)` a déjà créé l'index : sa présence ne dit donc
-        # rien. Le signal fiable est l'ancienne contrainte, encore inscrite dans
-        # le SQL de la table tant qu'on ne l'a pas reconstruite.
+        # v3: uniqueness must include `kind`, otherwise an address book cannot
+        # carry the same name as a calendar of the same account. The original
+        # constraint lives in the CREATE TABLE, so the table is rebuilt.
+        # `executescript(SCHEMA)` has already created the index, so its presence
+        # tells us nothing. The reliable signal is the old constraint, still
+        # written in the table's SQL until we rebuild it.
         ddl = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='calendars'"
         ).fetchone()
@@ -184,7 +183,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 @contextlib.contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """Transaction immédiate : évite les conflits d'écriture concurrents."""
+    """Immediate transaction: avoids concurrent write conflicts."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
@@ -196,13 +195,13 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 
 
 class Database:
-    """Petit dépôt de données ; une connexion par thread."""
+    """Small data store; one connection per thread."""
 
     def __init__(self, path: str) -> None:
         self.path = path
         self._shared: sqlite3.Connection | None = None
         if path == ":memory:":
-            # Une base en mémoire ne survit pas au changement de connexion.
+            # An in-memory database does not survive a connection change.
             self._shared = connect(path)
             init_db(self._shared)
 
@@ -264,11 +263,11 @@ class Database:
             )
 
     def update_user(self, user_id: int, **fields: object) -> None:
-        """Modifie l'état civil d'un compte.
+        """Update an account's descriptive fields.
 
-        `username` n'est délibérément pas modifiable : il apparaît dans les URLs
-        CalDAV déjà enregistrées par les clients, qui perdraient leurs agendas.
-        Le mot de passe garde `set_password`, qui doit le hacher.
+        `username` is deliberately not editable: it appears in the CalDAV URLs
+        clients have already stored, and they would lose their calendars.
+        The password keeps `set_password`, which must hash it.
         """
         allowed = {"display_name", "email", "is_admin"}
         updates = {k: v for k, v in fields.items() if k in allowed}
@@ -300,7 +299,7 @@ class Database:
         return int(self.conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"])
 
     def count_admins(self) -> int:
-        """Sert à refuser de supprimer ou dégrader le dernier administrateur."""
+        """Used to refuse deleting or demoting the last administrator."""
         return int(
             self.conn.execute(
                 "SELECT COUNT(*) AS n FROM users WHERE is_admin = 1"
@@ -345,10 +344,10 @@ class Database:
             return int(cur.lastrowid)
 
     def create_addressbook(self, user_id: int, name: str, **kw: object) -> int:
-        """Un carnet d'adresses est une collection de même forme qu'un agenda.
+        """An address book is a collection shaped exactly like a calendar.
 
-        Partager la table lui donne sans effort les révisions de synchronisation,
-        les ETags et le journal des changements déjà éprouvés côté CalDAV.
+        Sharing the table hands it the sync revisions, ETags and change journal
+        already proven on the CalDAV side, at no cost.
         """
         kw.pop("kind", None)
         kw.setdefault("components", "VCARD")
@@ -388,8 +387,8 @@ class Database:
         )
 
     def list_calendars(self, user_id: int) -> list[sqlite3.Row]:
-        # Filtré sur kind : sans ça les carnets d'adresses remonteraient partout
-        # où l'on attend des agendas (CalDAV, /view/, tableau de bord).
+        # Filtered on kind: without it, address books would surface everywhere
+        # calendars are expected (CalDAV, /view/, dashboard).
         return list(
             self.conn.execute(
                 "SELECT * FROM calendars WHERE user_id = ? AND kind = 'calendar'"
@@ -437,10 +436,10 @@ class Database:
         return token
 
     def stats(self) -> dict[str, int]:
-        """Compteurs globaux du tableau de bord, en quelques agrégats.
+        """Dashboard-wide counters, in a handful of aggregates.
 
-        Compter agenda par agenda ferait une requête par ligne affichée ; ici
-        le nombre de requêtes ne dépend pas du nombre de comptes.
+        Counting calendar by calendar would mean one query per displayed row;
+        here the number of queries does not depend on the number of accounts.
         """
         def _un(sql: str) -> int:
             return int(self.conn.execute(sql).fetchone()["n"])
@@ -461,7 +460,7 @@ class Database:
         }
 
     def object_counts(self) -> dict[int, int]:
-        """Nombre d'objets par agenda, en une seule requête."""
+        """Object count per calendar, in a single query."""
         return {
             int(row["calendar_id"]): int(row["n"])
             for row in self.conn.execute(
@@ -508,7 +507,7 @@ class Database:
         summary: str,
         etag: str,
     ) -> int:
-        """Insère ou remplace un objet et incrémente la révision de sync."""
+        """Insert or replace an object and bump the sync revision."""
         now = utcnow()
         with transaction(self.conn) as conn:
             rev = self._bump_rev(conn, calendar_id)
@@ -590,7 +589,7 @@ class Database:
         start: int | None = None,
         end: int | None = None,
     ) -> list[sqlite3.Row]:
-        """Pré-filtre SQL (composant + plage). Les récurrences sont affinées en Python."""
+        """SQL pre-filter (component + range). Recurrences are refined in Python."""
         sql = "SELECT * FROM objects WHERE calendar_id = ?"
         params: list[object] = [calendar_id]
         if components:

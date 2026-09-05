@@ -1,13 +1,13 @@
-"""Adaptateur ASGI optionnel (uvicorn, hypercorn, gunicorn+uvicorn worker).
+"""Optional ASGI adapter (uvicorn, hypercorn, gunicorn+uvicorn worker).
 
     uvicorn kalendra.asgi:app --http h11 --host 0.0.0.0 --port 5232
 
-Le paramètre ``--http h11`` est important : l'analyseur httptools refuse les
-verbes qu'il ne connaît pas, alors que h11 accepte n'importe quel jeton de
-méthode — ce dont CalDAV a besoin (MKCALENDAR, REPORT…).
+The ``--http h11`` flag matters: the httptools parser rejects verbs it does
+not know, whereas h11 accepts any method token — which is what CalDAV needs
+(MKCALENDAR, REPORT and friends).
 
-Le traitement étant synchrone (SQLite), il est délégué au pool de threads
-d'asyncio pour ne pas bloquer la boucle d'événements.
+Since the handling is synchronous (SQLite), it is offloaded to asyncio's thread
+pool so the event loop is never blocked.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .http import Request, error
 
 
 class ASGIApplication:
-    """Enveloppe ASGI autour de `Kalendra.dispatch`."""
+    """ASGI wrapper around `Kalendra.dispatch`."""
 
     def __init__(self, application: Kalendra | None = None) -> None:
         self._application = application

@@ -1,4 +1,4 @@
-"""Tests sur le vrai serveur HTTP : vérifie que les verbes WebDAV passent le socket."""
+"""Tests against the real HTTP server: proves WebDAV verbs cross the socket."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ PROPFIND = (
 
 
 class LiveServerTests(unittest.TestCase):
-    """Un serveur réel est démarré : le transport est testé, pas seulement le routage."""
+    """A real server is started: transport is tested, not just routing."""
 
     @classmethod
     def setUpClass(cls) -> None:
