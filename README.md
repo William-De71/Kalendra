@@ -7,6 +7,8 @@ Python.
 
 - **CalDAV en lecture/écriture** pour GNOME Evolution (Fedora), Thunderbird,
   DAVx⁵ et iOS/macOS.
+- **CardDAV en lecture/écriture** pour les mêmes clients : les carnets
+  d'adresses vivent sous `/addressbooks/<compte>/<carnet>/`.
 - **Flux ICS en lecture seule** pour Google Calendar et Proton Calendar, qui
   ne savent pas parler CalDAV à un serveur tiers (voir plus bas).
 - **Une seule image, un seul fichier de données.** Sauvegarder son agenda,
@@ -51,14 +53,15 @@ il faudrait passer par l'API Google Calendar et un jeton OAuth.
 ## Démarrage rapide
 
 ```sh
-git clone https://github.com/OWNER/kalendra.git
+git clone https://github.com/William-De71/kalendra.git
 cd kalendra
 cp .env.example .env       # renseignez KALENDRA_ADMIN_PASSWORD
 docker compose up -d
 ```
 
 Puis ouvrez <http://localhost:5232/admin> avec le compte administrateur : la
-page affiche l'URL CalDAV de chaque agenda et l'URL de son flux ICS.
+page liste les comptes, et la fiche de chacun affiche l'URL CalDAV de ses
+agendas, celle de ses carnets d'adresses et l'URL de chaque flux ICS.
 
 Sans docker-compose :
 
@@ -69,7 +72,7 @@ docker run -d --name kalendra \
   -e KALENDRA_ADMIN_USER=will \
   -e KALENDRA_ADMIN_PASSWORD='…' \
   -e KALENDRA_PUBLIC_URL=https://cal.example.org \
-  ghcr.io/OWNER/kalendra:1
+  ghcr.io/William-De71/kalendra:1
 ```
 
 Sans Docker du tout (Python ≥ 3.11, rien à installer) :
@@ -133,14 +136,18 @@ la même URL `…/feed/<jeton>.ics`. Proton rafraîchit environ toutes les heure
 
 ---
 
-## Consulter ses agendas depuis un navigateur
+## Consulter ses agendas et ses contacts depuis un navigateur
 
-`/view/` liste les agendas auxquels le compte connecté a accès, et
+`/view/` liste les agendas et les carnets auxquels le compte connecté a accès, et
 `/view/<utilisateur>/<agenda>/` affiche une grille mensuelle : semaines
 commençant le lundi, récurrences développées, exceptions respectées, journées
 entières sur toute leur durée. Un clic sur un événement ouvre son détail, y
 compris sa source iCalendar brute. Les mois se parcourent par les liens
 « précédent » et « suivant », ou directement par `?m=2026-03`.
+
+`/view/contacts/<utilisateur>/<carnet>/` fait de même pour un carnet
+d'adresses : la liste des fiches triée par nom, puis le détail d'un contact
+(courriels, téléphones, adresses, organisation) et sa source vCard brute.
 
 C'est une **vue, pas un éditeur** : aucune écriture n'est possible depuis ces
 pages. Créer et modifier des événements reste le travail de votre client
@@ -196,6 +203,50 @@ Pour servir Kalendra dans un sous-chemin (`https://exemple.org/cal/`),
 positionnez `KALENDRA_BASE_PATH=/cal` : toutes les URLs générées dans les
 réponses XML en tiendront compte.
 
+### Importer un calendrier public (vacances scolaires, jours fériés…)
+
+Kalendra n'a **aucun client HTTP sortant** : il ne va jamais chercher un
+calendrier ailleurs. Un fichier `.ics` public s'importe donc explicitement,
+de deux façons.
+
+**Depuis le navigateur**, sur `/view/` : dépliez « Ajouter un calendrier externe
+(vacances scolaires, jours fériés…) », donnez un nom et déposez le fichier —
+l'agenda est créé et rempli en une fois. Pour verser un fichier dans un agenda
+existant, le même bloc figure sur sa page. Chaque utilisateur le fait sur ses
+propres agendas, sans être administrateur.
+
+**En ligne de commande**, avec `scripts/import-ics.py` — utile pour un `cron` :
+
+```sh
+# Vacances scolaires de la zone B, depuis data.education.gouv.fr
+curl -O https://fr.ftp.opendatasoft.com/openscol/fr-en-calendrier-scolaire/Zone-B.ics
+./scripts/import-ics.py --user will --password '…' \
+    --calendar vacances --file Zone-B.ics --create
+```
+
+Un `.ics` public agrège tous ses événements dans un seul `VCALENDAR`, alors que
+CalDAV impose une ressource par événement : le script découpe le fichier et
+dépose un objet par `VEVENT`, en recopiant l'entête et les `VTIMEZONE` dans
+chacun. Le nom de chaque ressource dérive de l'UID d'origine, si bien que
+**réimporter le même fichier met à jour les événements au lieu de les
+dupliquer**. Ajoutez `--dry-run` pour voir le plan sans rien écrire.
+
+Deux limites à connaître :
+
+- **Ce n'est pas un abonnement.** Le calendrier scolaire couvre plusieurs années
+  d'avance, donc un import annuel suffit ; pour une source qui bouge, relancez
+  le script depuis un `cron`.
+- **Les UID du fichier officiel changent à chaque régénération** par le
+  ministère (ils dérivent de l'horodatage de production). Si le fichier amont est
+  republié avec de nouveaux UID, un réimport créera de nouveaux objets à côté des
+  anciens. Dans ce cas, videz l'agenda avant de réimporter — ou réservez-lui un
+  agenda dédié, ce que fait `--create`, précisément pour pouvoir le vider sans
+  risque.
+
+L'agenda ainsi rempli se comporte comme n'importe quel autre : visible dans
+Evolution ou DAVx⁵, consultable sous `/view/`, et exposable en lecture seule à
+Google ou Proton via son flux `/feed/<jeton>.ics`.
+
 ### Sauvegarde
 
 ```sh
@@ -235,12 +286,15 @@ Tout passe par l'environnement.
 ## Ligne de commande
 
 ```sh
-kalendra user add will --admin --with-calendar perso
+kalendra user add will --admin --with-calendar perso --with-addressbook contacts
 kalendra user list
 kalendra user passwd will
 kalendra calendar add will astreinte --display-name "Astreinte" --color '#e01b24'
 kalendra calendar list
 kalendra calendar token will perso     # régénère le jeton du flux ICS
+kalendra addressbook add will contacts --display-name "Contacts"
+kalendra addressbook list
+kalendra addressbook rm will contacts
 kalendra serve --host 0.0.0.0 --port 5232
 ```
 
@@ -280,7 +334,6 @@ Microsoft courants), expansion des récurrences `FREQ`, `INTERVAL`, `COUNT`,
 - Pas de planification (`VFREEBUSY` inter-utilisateurs, boîtes
   `schedule-inbox` / `schedule-outbox` de la RFC 6638) : Kalendra ne fait pas
   d'invitations par courriel.
-- Pas de CardDAV (contacts).
 - Pas de `LOCK` / `UNLOCK` : les ETags suffisent à détecter les conflits, et
   aucun client CalDAV courant n'exige le verrouillage.
 - `MOVE` et `COPY` ne sont pas implémentés (les clients ré-écrivent l'objet).
@@ -351,13 +404,30 @@ permet de changer de serveur HTTP sans toucher à la logique.
 
 ### Publier une version
 
+Kalendra est en **0.x** : l'interface peut encore changer d'une version à
+l'autre. Le passage en 1.0.0 marquera l'engagement de stabilité — d'ici là,
+`minor` pour les nouveautés, `patch` pour les correctifs.
+
+**Depuis GitHub** — le plus simple. Décrivez d'abord les changements sous
+`## [Non publié]` dans `CHANGELOG.md`, puis : onglet **Actions** →
+**Préparer une version** → *Run workflow* → choisissez **patch**, **minor** ou
+**major**.
+
+Le workflow calcule le numéro suivant, rejoue les tests et le lint, met à jour
+`__version__` et bascule « Non publié » vers une section datée, committe,
+pousse l'étiquette `vX.Y.Z` et enchaîne sur la publication. Cochez
+*Simuler* pour voir le numéro et le diff sans rien pousser.
+
+**Depuis un poste**, si vous préférez maîtriser le commit :
+
 1. Mettre à jour `__version__` dans `src/kalendra/__init__.py`.
 2. Ajouter la section correspondante dans `CHANGELOG.md`.
-3. `git tag v1.2.3 && git push --tags`.
+3. `git tag v0.2.0 && git push --tags`.
 
-Le workflow `release.yml` vérifie la cohérence version/étiquette/changelog,
-rejoue les tests, publie l'image multi-architecture (amd64 + arm64) sur GHCR
-avec SBOM et attestation de provenance, puis crée la release GitHub.
+Dans les deux cas, `release.yml` vérifie la cohérence version/étiquette/
+changelog, rejoue les tests, publie l'image multi-architecture (amd64 + arm64)
+sur GHCR avec SBOM et attestation de provenance, puis crée la release GitHub
+en reprenant les notes du changelog.
 
 ---
 

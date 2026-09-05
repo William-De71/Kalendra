@@ -64,6 +64,52 @@ httptools d'uvicorn, lui, refuse ce qu'il ne connaît pas — d'où le
 Conséquence pratique pour les tests : ils appellent `dispatch()` directement,
 sans socket. C'est pourquoi la suite complète s'exécute en moins d'une seconde.
 
+### Les carnets d'adresses partagent les tables des agendas
+
+CardDAV a été ajouté après coup. Plutôt que de dupliquer `calendars`, `objects`
+et `changes`, un carnet est une ligne de `calendars` avec `kind =
+'addressbook'` (colonne introduite par la migration de schéma v2).
+
+Ce choix lui donne sans effort les révisions de synchronisation, les ETags et
+le journal des changements — du code déjà éprouvé côté calendrier. La
+contrepartie est que **toute requête sur `calendars` doit filtrer sur `kind`** :
+`list_calendars()` et `list_all_calendars()` le font, et l'oublier ferait
+apparaître les carnets là où l'on attend des agendas (CalDAV, `/view/`,
+tableau de bord).
+
+`Resource.collection_kind` porte la même distinction côté HTTP : c'est lui qui
+décide du `resourcetype`, du `Content-Type` et de l'analyseur appliqué au `PUT`.
+
+Comme pour les événements, **une carte n'est jamais réécrite** : `vcard.py`
+n'en extrait que l'UID, le nom affiché et l'adresse mail.
+
+### L'import de calendrier ne sort jamais sur le réseau
+
+`/view/<user>/<agenda>/import` accepte un `.ics` **téléversé**, jamais une URL
+que le serveur irait chercher. C'est délibéré : donner à tout compte le pouvoir
+de déclencher une requête HTTP sortante ouvrirait la porte au SSRF (scan du
+réseau interne, métadonnées cloud) et introduirait une dépendance réseau dans
+un serveur qui n'en a aucune. L'utilisateur télécharge le fichier lui-même,
+puis le dépose.
+
+Ce sont les **seules routes en écriture de `/view/`** — import, création et
+suppression d'agenda — d'où le jeton anti-CSRF sur chacune : le navigateur
+rejoue automatiquement les identifiants Basic. Tout le reste de la vue refuse
+les méthodes autres que `GET`/`HEAD`.
+
+Chaque compte gère ses propres agendas sans être administrateur ; seul un
+`is_admin` peut viser un autre compte. Créer un agenda et y verser un fichier
+se fait en une seule requête, parce que c'est le geste réel pour un calendrier
+externe — et si l'import ne produit aucun événement, l'agenda tout juste créé
+est retiré plutôt que de laisser une coquille vide.
+
+Un `.ics` publié agrège ses événements dans un seul `VCALENDAR` alors que
+CalDAV impose une ressource par événement : `importics.py` découpe et recopie
+l'entête et les `VTIMEZONE` dans chaque objet. Le nom de ressource dérive de
+l'UID, si bien qu'un réimport met à jour au lieu de dupliquer. Un composant
+illisible est ignoré et signalé, sans faire échouer les autres — importer 67
+événements sur 68 vaut mieux que rien.
+
 ### Google et Proton ne font pas de CalDAV
 
 Ce point revient sans cesse, autant l'écrire une fois pour toutes.
@@ -95,10 +141,12 @@ choix de conception, pas un oubli.
 | `resources.py` | Arbre de ressources, résolution d'URL |
 | `db.py` | Schéma SQLite, transactions, révisions de synchronisation |
 | `ics.py` | Analyseur et générateur iCalendar |
+| `importics.py` | Import d'un `.ics` agrégé, un objet par composant |
+| `vcard.py` | Analyseur vCard (CardDAV) |
 | `rrule.py` | Expansion des récurrences |
 | `feed.py` | Flux ICS publics |
 | `admin.py` | Interface web d'administration |
-| `calendarview.py` | Vue mensuelle en lecture seule |
+| `calendarview.py` | Vue mensuelle et vue contacts, en lecture seule |
 | `cli.py` | Ligne de commande |
 | `http.py` | `Request` / `Response`, sans framework |
 | `xmlutil.py` | Espaces de noms DAV, sérialisation, analyse XML sûre |
@@ -110,20 +158,32 @@ choix de conception, pas un oubli.
 ```
 /                                     racine, découverte
 /.well-known/caldav                   301 vers /
+/.well-known/carddav                  301 vers /
 /principals/<user>/                   principal
 /calendars/<user>/                    calendar-home-set
 /calendars/<user>/<agenda>/           collection calendrier
 /calendars/<user>/<agenda>/<x>.ics    ressource
+/addressbooks/<user>/                 addressbook-home-set
+/addressbooks/<user>/<carnet>/        carnet d'adresses
+/addressbooks/<user>/<carnet>/<x>.vcf carte de visite
 /feed/<jeton>.ics                     flux public, sans authentification
 /view/                                liste des agendas consultables
 /view/<user>/<agenda>/?m=AAAA-MM      vue mensuelle, lecture seule
 /view/<user>/<agenda>/<x>.ics         détail d'un objet
+/view/<user>/<agenda>/import          POST, dépôt d'un .ics (CSRF)
+/view/agendas/creer                   POST, création (+ import) d'un agenda
+/view/<user>/<agenda>/supprimer       POST, suppression d'un agenda
+/view/contacts/<user>/<carnet>/       liste des contacts, lecture seule
+/view/contacts/<user>/<carnet>/<x>.vcf  fiche d'un contact
 /admin…                               interface d'administration (is_admin)
 /health                               sonde, sans authentification
 ```
 
-`/view/` est accessible à tout compte authentifié, sur ses propres agendas
-(un administrateur voit tout) ; `/admin` exige `is_admin`. Les deux sont
+`/view/` est accessible à tout compte authentifié, sur ses propres agendas et
+carnets (un administrateur voit tout) ; `/admin` exige `is_admin`. Le préfixe
+`/view/contacts/` n'est emprunté que si le segment suivant désigne un compte
+existant — sans quoi un utilisateur nommé « contacts » perdrait l'accès à ses
+propres agendas. Les deux sont
 coupées ensemble par `KALENDRA_ADMIN_UI=false`.
 
 ### Fuseaux dans la vue mensuelle
@@ -231,7 +291,6 @@ Une connexion par thread, WAL activé.
   exceptions, participants et rappels — c'est là que sont les bugs, et le pire
   scénario est qu'il perde des propriétés en réécrivant un objet.
 - **Planification RFC 6638** (invitations, `schedule-inbox`/`outbox`).
-- **CardDAV.**
 - **`LOCK` / `UNLOCK`** : les ETags suffisent, aucun client courant ne l'exige.
 - **`MOVE` / `COPY`** : les clients ré-écrivent l'objet.
 - **Partage d'agenda entre utilisateurs.**
@@ -244,10 +303,36 @@ Une connexion par thread, WAL activé.
 
 ## Publier une version
 
-1. `__version__` dans `src/kalendra/__init__.py`.
-2. Section correspondante dans `CHANGELOG.md`.
-3. `git tag vX.Y.Z && git push --tags`.
+Le projet est en **0.x** tant que rien n'est publié et que l'interface peut
+bouger : en semver, `0.y.z` n'engage aucune compatibilité. `major` ferait
+passer en 1.0.0, ce qui est une décision, pas une routine.
 
-`release.yml` vérifie la cohérence version/étiquette/changelog avant de
-publier. `OWNER` doit être remplacé par le compte GitHub réel dans `README.md`,
-`pyproject.toml`, `Dockerfile` et `docker-compose.yml`.
+Trois fichiers portent le numéro et doivent rester d'accord :
+`src/kalendra/__init__.py`, `pyproject.toml` et `CHANGELOG.md`.
+`scripts/bump-version.py` les met à jour ensemble et refuse de travailler si
+les deux premiers divergent déjà.
+
+Deux chemins, une seule publication.
+
+**Actions → « Préparer une version » → patch / minor / major.**
+`prepare-release.yml` calcule le numéro (`scripts/bump-version.py`), rejoue
+tests et lint, réécrit `__version__` et bascule « Non publié » du CHANGELOG
+vers une section datée, committe et pousse l'étiquette.
+
+**Ou à la main :** `__version__`, section du CHANGELOG, puis
+`git tag vX.Y.Z && git push --tags`.
+
+`release.yml` fait la publication dans les deux cas : cohérence
+version/étiquette/changelog, tests, image multi-architecture sur
+`ghcr.io/William-De71/kalendra` avec SBOM et attestation, release GitHub.
+
+**Pourquoi `workflow_call` et pas seulement le déclencheur par étiquette :**
+un `push` effectué avec le `GITHUB_TOKEN` ne redéclenche aucun workflow — c'est
+la protection anti-boucle de GitHub. L'étiquette poussée par
+`prepare-release.yml` ne lancerait donc jamais `release.yml` ; celui-ci est
+appelé explicitement. La seule alternative serait un jeton personnel à
+maintenir en secret.
+
+`scripts/bump-version.py` calcule tout avant d'écrire quoi que ce soit : une
+écriture partielle laisserait `__version__` incrémenté sans section
+correspondante, précisément l'incohérence que `release.yml` refuse ensuite.

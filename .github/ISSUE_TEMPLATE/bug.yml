@@ -6,8 +6,8 @@ body:
     id: version
     attributes:
       label: Version
-      description: Sortie de `docker run --rm ghcr.io/OWNER/kalendra --version`
-      placeholder: "1.0.0"
+      description: Sortie de `docker run --rm ghcr.io/William-De71/kalendra --version`
+      placeholder: "0.1.0"
     validations:
       required: true
 

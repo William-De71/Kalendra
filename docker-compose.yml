@@ -1,7 +1,7 @@
 services:
   kalendra:
     # Pour utiliser l'image publiée plutôt que la construire localement :
-    #   image: ghcr.io/OWNER/kalendra:1
+    #   image: ghcr.io/William-De71/kalendra:1
     build: .
     image: kalendra:local
     container_name: kalendra
