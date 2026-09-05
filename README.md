@@ -52,16 +52,59 @@ il faudrait passer par l'API Google Calendar et un jeton OAuth.
 
 ## Démarrage rapide
 
+Rien à cloner : un `docker-compose.yml` de trois douzaines de lignes suffit,
+avec l'image publiée.
+
+```yaml
+services:
+  kalendra:
+    image: ghcr.io/william-de71/kalendra:0
+    container_name: kalendra
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5232:5232"
+    volumes:
+      - kalendra-data:/data
+    environment:
+      # Compte administrateur créé au tout premier démarrage uniquement.
+      KALENDRA_ADMIN_USER: "admin"
+      KALENDRA_ADMIN_PASSWORD: "changez-moi-vraiment"
+      # URL publique telle que vue par les clients : sert aux URLs affichées
+      # dans l'interface d'administration.
+      KALENDRA_PUBLIC_URL: "https://cal.example.org"
+      TZ: "Europe/Paris"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5232/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  kalendra-data:
+```
+
 ```sh
-git clone https://github.com/William-De71/Kalendra.git
-cd kalendra
-cp .env.example .env       # renseignez KALENDRA_ADMIN_PASSWORD
 docker compose up -d
 ```
+
+Le tag `:0` suit toutes les versions 0.x. Kalendra étant en 0.x, l'interface
+peut encore changer d'une version à l'autre : épinglez `:0.1.0` si vous
+préférez décider vous-même quand mettre à jour.
 
 Puis ouvrez <http://localhost:5232/admin> avec le compte administrateur : la
 page liste les comptes, et la fiche de chacun affiche l'URL CalDAV de ses
 agendas, celle de ses carnets d'adresses et l'URL de chaque flux ICS.
+
+Le mot de passe n'est lu qu'au tout premier démarrage, sur une base vide :
+le changer ensuite dans le fichier n'a aucun effet, cela se fait depuis
+`/admin`. Mettez-le plutôt dans un `.env` à côté du `docker-compose.yml`
+(`KALENDRA_ADMIN_PASSWORD=…` puis `KALENDRA_ADMIN_PASSWORD: "${KALENDRA_ADMIN_PASSWORD:?}"`)
+si vous préférez ne pas le voir en clair.
 
 Sans docker-compose :
 
@@ -69,16 +112,26 @@ Sans docker-compose :
 docker run -d --name kalendra \
   -p 127.0.0.1:5232:5232 \
   -v kalendra-data:/data \
-  -e KALENDRA_ADMIN_USER=will \
+  -e KALENDRA_ADMIN_USER=admin \
   -e KALENDRA_ADMIN_PASSWORD='…' \
   -e KALENDRA_PUBLIC_URL=https://cal.example.org \
-  ghcr.io/william-de71/kalendra:1
+  ghcr.io/william-de71/kalendra:0
+```
+
+Pour construire l'image depuis les sources plutôt que d'utiliser celle
+publiée, le dépôt fournit son propre `docker-compose.yml` :
+
+```sh
+git clone https://github.com/William-De71/Kalendra.git
+cd Kalendra
+cp .env.example .env       # renseignez KALENDRA_ADMIN_PASSWORD
+docker compose up -d
 ```
 
 Sans Docker du tout (Python ≥ 3.11, rien à installer) :
 
 ```sh
-PYTHONPATH=src python -m kalendra --db ./kalendra.db user add will --admin --with-calendar perso
+PYTHONPATH=src python -m kalendra --db ./kalendra.db user add admin --admin --with-calendar perso
 PYTHONPATH=src KALENDRA_DB=./kalendra.db python -m kalendra serve
 ```
 
@@ -220,7 +273,7 @@ propres agendas, sans être administrateur.
 ```sh
 # Vacances scolaires de la zone B, depuis data.education.gouv.fr
 curl -O https://fr.ftp.opendatasoft.com/openscol/fr-en-calendrier-scolaire/Zone-B.ics
-./scripts/import-ics.py --user will --password '…' \
+./scripts/import-ics.py --user admin --password '…' \
     --calendar vacances --file Zone-B.ics --create
 ```
 
@@ -286,15 +339,15 @@ Tout passe par l'environnement.
 ## Ligne de commande
 
 ```sh
-kalendra user add will --admin --with-calendar perso --with-addressbook contacts
+kalendra user add admin --admin --with-calendar perso --with-addressbook contacts
 kalendra user list
-kalendra user passwd will
-kalendra calendar add will astreinte --display-name "Astreinte" --color '#e01b24'
+kalendra user passwd admin
+kalendra calendar add admin astreinte --display-name "Astreinte" --color '#e01b24'
 kalendra calendar list
-kalendra calendar token will perso     # régénère le jeton du flux ICS
-kalendra addressbook add will contacts --display-name "Contacts"
+kalendra calendar token admin perso     # régénère le jeton du flux ICS
+kalendra addressbook add admin contacts --display-name "Contacts"
 kalendra addressbook list
-kalendra addressbook rm will contacts
+kalendra addressbook rm admin contacts
 kalendra serve --host 0.0.0.0 --port 5232
 ```
 
