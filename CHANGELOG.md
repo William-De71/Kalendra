@@ -5,7 +5,7 @@ versionnage sémantique.
 
 ## [Non publié]
 
-## [0.1.0] — 2026-09-05
+## [1.0.0] — 2026-09-05
 
 ### Ajouté
 
@@ -98,5 +98,5 @@ versionnage sémantique.
   elles ne figurent plus depuis leur déplacement sur la fiche d'un compte. Le
   script s'interrompait silencieusement en annonçant un succès.
 
-[Non publié]: https://github.com/William-De71/Kalendra/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/William-De71/Kalendra/releases/tag/v0.1.0
+[Non publié]: https://github.com/William-De71/Kalendra/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/William-De71/Kalendra/releases/tag/v1.0.0

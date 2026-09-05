@@ -306,9 +306,10 @@ Une connexion par thread, WAL activé.
 
 ## Publier une version
 
-Le projet est en **0.x** tant que rien n'est publié et que l'interface peut
-bouger : en semver, `0.y.z` n'engage aucune compatibilité. `major` ferait
-passer en 1.0.0, ce qui est une décision, pas une routine.
+Versionnage sémantique à partir de la 1.0.0 : `patch` pour un correctif,
+`minor` pour une nouveauté rétrocompatible, `major` pour une rupture. Le
+numéro majeur est un engagement envers les déploiements existants — casser la
+compatibilité impose 2.0.0, ce n'est pas une routine.
 
 Trois fichiers portent le numéro et doivent rester d'accord :
 `src/kalendra/__init__.py`, `pyproject.toml` et `CHANGELOG.md`.

@@ -58,7 +58,7 @@ avec l'image publiée.
 ```yaml
 services:
   kalendra:
-    image: ghcr.io/william-de71/kalendra:0
+    image: ghcr.io/william-de71/kalendra:1
     container_name: kalendra
     restart: unless-stopped
     ports:
@@ -92,9 +92,9 @@ volumes:
 docker compose up -d
 ```
 
-Le tag `:0` suit toutes les versions 0.x. Kalendra étant en 0.x, l'interface
-peut encore changer d'une version à l'autre : épinglez `:0.1.0` si vous
-préférez décider vous-même quand mettre à jour.
+Le tag `:1` suit toutes les versions 1.x, correctifs et nouveautés compris,
+sans rupture de compatibilité. Épinglez `:1.0.0` si vous préférez décider
+vous-même quand mettre à jour.
 
 Puis ouvrez <http://localhost:5232/admin> avec le compte administrateur : la
 page liste les comptes, et la fiche de chacun affiche l'URL CalDAV de ses
@@ -115,7 +115,7 @@ docker run -d --name kalendra \
   -e KALENDRA_ADMIN_USER=admin \
   -e KALENDRA_ADMIN_PASSWORD='…' \
   -e KALENDRA_PUBLIC_URL=https://cal.example.org \
-  ghcr.io/william-de71/kalendra:0
+  ghcr.io/william-de71/kalendra:1
 ```
 
 Pour construire l'image depuis les sources plutôt que d'utiliser celle
@@ -457,9 +457,9 @@ permet de changer de serveur HTTP sans toucher à la logique.
 
 ### Publier une version
 
-Kalendra est en **0.x** : l'interface peut encore changer d'une version à
-l'autre. Le passage en 1.0.0 marquera l'engagement de stabilité — d'ici là,
-`minor` pour les nouveautés, `patch` pour les correctifs.
+Kalendra suit le **versionnage sémantique** : `patch` pour un correctif,
+`minor` pour une nouveauté rétrocompatible, `major` pour une rupture de
+compatibilité.
 
 **Depuis GitHub** — le plus simple. Décrivez d'abord les changements sous
 `## [Non publié]` dans `CHANGELOG.md`, puis : onglet **Actions** →
@@ -475,7 +475,7 @@ pousse l'étiquette `vX.Y.Z` et enchaîne sur la publication. Cochez
 
 1. Mettre à jour `__version__` dans `src/kalendra/__init__.py`.
 2. Ajouter la section correspondante dans `CHANGELOG.md`.
-3. `git tag v0.2.0 && git push --tags`.
+3. `git tag v1.1.0 && git push --tags`.
 
 Dans les deux cas, `release.yml` vérifie la cohérence version/étiquette/
 changelog, rejoue les tests, publie l'image multi-architecture (amd64 + arm64)
