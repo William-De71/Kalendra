@@ -64,8 +64,11 @@ class RealClientTests(unittest.TestCase):
         self.assertTrue(str(self.principal.url).endswith(f"/principals/{USERNAME}/"))
 
     def test_le_nouvel_agenda_apparait_dans_le_home_set(self):
-        names = [str(c.url) for c in self.principal.calendars()]
-        self.assertTrue(any(self.calendar_name in name for name in names))
+        # Matched on the display name, not the URL: caldav 3.x generates a UUID
+        # for the resource path and sends the requested name as DISPLAYNAME, so
+        # asserting on the URL would test the client library, not the server.
+        noms = [c.get_display_name() for c in self.principal.calendars()]
+        self.assertIn(self.calendar_name, noms)
 
     def test_creation_recherche_et_suppression(self):
         start = datetime(2026, 3, 10, 9, 0, tzinfo=UTC)
