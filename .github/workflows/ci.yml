@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Installer ruff
         run: pipx install ruff
@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
@@ -53,12 +53,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Kalendra n'a aucune dépendance d'exécution : la suite tourne telle quelle.
+      # Kalendra has no runtime dependency: the suite runs as-is.
       - name: Suite de tests (stdlib)
         run: python -m unittest discover -s tests -t tests -v
 
       - name: Couverture
-        if: matrix.python-version == '3.13'
+        # Runs on the version the Docker image ships, so coverage reflects
+        # what users actually execute.
+        if: matrix.python-version == '3.14'
         run: |
           python -m pip install --upgrade coverage
           python -m coverage run --source=src/kalendra -m unittest discover -s tests -t tests
@@ -66,7 +68,7 @@ jobs:
           python -m coverage xml
 
       - name: Publier le rapport de couverture
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v7
         with:
           name: coverage
