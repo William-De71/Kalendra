@@ -5,24 +5,36 @@ build-backend = "hatchling.build"
 [project]
 name = "kalendra"
 version = "0.1.0"
-description = "Serveur CalDAV local, autonome, sur SQLite, avec flux ICS public pour Google Calendar et Proton Calendar"
+description = "Self-hosted CalDAV & CardDAV server on a single SQLite file, with public ICS feeds for Google Calendar and Proton Calendar"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "Will" }]
-keywords = ["caldav", "calendar", "ics", "icalendar", "sqlite", "webdav", "self-hosted"]
+keywords = [
+  "caldav",
+  "carddav",
+  "calendar",
+  "contacts",
+  "ics",
+  "icalendar",
+  "vcard",
+  "sqlite",
+  "webdav",
+  "self-hosted",
+]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 3 - Alpha",
   "Environment :: Web Environment",
   "Intended Audience :: System Administrators",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Email :: Address Book",
   "Topic :: Office/Business :: Scheduling",
 ]
 
-#: Kalendra ne dépend que de la bibliothèque standard de Python.
+#: Kalendra depends on the Python standard library only.
 dependencies = []
 
 [project.optional-dependencies]
