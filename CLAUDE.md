@@ -327,7 +327,14 @@ vers une section datée, committe et pousse l'étiquette.
 
 `release.yml` fait la publication dans les deux cas : cohérence
 version/étiquette/changelog, tests, image multi-architecture sur
-`ghcr.io/William-De71/kalendra` avec SBOM et attestation, release GitHub.
+`ghcr.io/william-de71/kalendra` avec SBOM et attestation, release GitHub.
+
+**Attention à la casse :** le dépôt est `William-De71/Kalendra`, mais GHCR
+refuse les majuscules (« repository name must be lowercase »). Les URLs
+github.com gardent donc la casse du dépôt, les références `ghcr.io/` sont en
+minuscules. Dans `release.yml`, `docker/metadata-action` s'en charge seul ;
+l'attestation et la commande `docker pull` des notes de release passent par
+une étape de mise en minuscules explicite.
 
 **Pourquoi `workflow_call` et pas seulement le déclencheur par étiquette :**
 un `push` effectué avec le `GITHUB_TOKEN` ne redéclenche aucun workflow — c'est

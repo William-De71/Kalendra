@@ -53,7 +53,7 @@ il faudrait passer par l'API Google Calendar et un jeton OAuth.
 ## Démarrage rapide
 
 ```sh
-git clone https://github.com/William-De71/kalendra.git
+git clone https://github.com/William-De71/Kalendra.git
 cd kalendra
 cp .env.example .env       # renseignez KALENDRA_ADMIN_PASSWORD
 docker compose up -d
@@ -72,7 +72,7 @@ docker run -d --name kalendra \
   -e KALENDRA_ADMIN_USER=will \
   -e KALENDRA_ADMIN_PASSWORD='…' \
   -e KALENDRA_PUBLIC_URL=https://cal.example.org \
-  ghcr.io/William-De71/kalendra:1
+  ghcr.io/william-de71/kalendra:1
 ```
 
 Sans Docker du tout (Python ≥ 3.11, rien à installer) :

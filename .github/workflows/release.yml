@@ -113,10 +113,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # GHCR refuses uppercase image names ("repository name must be
+      # lowercase"), and this repository is William-De71/Kalendra.
+      # docker/metadata-action lowercases on its own, but this attestation and
+      # the pull command in the release notes do not.
+      - name: Lowercase image name
+        id: image
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Attestation de provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
@@ -142,8 +150,11 @@ jobs:
 
       - name: Extraire les notes du journal des modifications
         id: notes
+        env:
+          IMAGE_REPO: ${{ github.repository }}
         run: |
           version="${{ needs.verify.outputs.version }}"
+          IMAGE="${IMAGE_REPO,,}"
           awk -v v="$version" '
             $0 ~ "^## \\[" v "\\]" { capture = 1; next }
             capture && /^## \[/ { exit }
@@ -154,7 +165,7 @@ jobs:
             echo "### Image Docker"
             echo ""
             echo '```sh'
-            echo "docker pull ghcr.io/${{ github.repository }}:${version}"
+            echo "docker pull ghcr.io/${IMAGE}:${version}"
             echo '```'
           } >> release-notes.md
           cat release-notes.md

@@ -98,5 +98,5 @@ versionnage sémantique.
   elles ne figurent plus depuis leur déplacement sur la fiche d'un compte. Le
   script s'interrompait silencieusement en annonçant un succès.
 
-[Non publié]: https://github.com/William-De71/kalendra/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/William-De71/kalendra/releases/tag/v0.1.0
+[Non publié]: https://github.com/William-De71/Kalendra/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/William-De71/Kalendra/releases/tag/v0.1.0

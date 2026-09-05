@@ -48,10 +48,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/William-De71/kalendra"
-Repository = "https://github.com/William-De71/kalendra"
-Issues = "https://github.com/William-De71/kalendra/issues"
-Changelog = "https://github.com/William-De71/kalendra/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/William-De71/Kalendra"
+Repository = "https://github.com/William-De71/Kalendra"
+Issues = "https://github.com/William-De71/Kalendra/issues"
+Changelog = "https://github.com/William-De71/Kalendra/blob/main/CHANGELOG.md"
 
 [project.scripts]
 kalendra = "kalendra.cli:main"

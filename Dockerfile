@@ -43,4 +43,4 @@ CMD ["serve"]
 LABEL org.opencontainers.image.title="Kalendra" \
       org.opencontainers.image.description="Serveur CalDAV autonome sur SQLite, avec flux ICS pour Google Calendar et Proton Calendar" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/William-De71/kalendra"
+      org.opencontainers.image.source="https://github.com/William-De71/Kalendra"
