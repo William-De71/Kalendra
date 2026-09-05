@@ -5,7 +5,7 @@
 # réseau vers PyPI. Résultat : une image d'une soixantaine de mégaoctets,
 # reproductible, sans chaîne d'approvisionnement à surveiller.
 
-FROM python:3.13-alpine AS runtime
+FROM python:3.14-alpine AS runtime
 
 # tzdata est indispensable : les TZID iCalendar (Europe/Paris…) sont résolus
 # par zoneinfo, qui lit la base de données système.
