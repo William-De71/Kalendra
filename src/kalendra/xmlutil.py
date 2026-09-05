@@ -12,11 +12,13 @@ _DOCTYPE = re.compile(rb"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
 
 NS_DAV = "DAV:"
 NS_CALDAV = "urn:ietf:params:xml:ns:caldav"
+NS_CARDDAV = "urn:ietf:params:xml:ns:carddav"
 NS_CS = "http://calendarserver.org/ns/"
 NS_ICAL = "http://apple.com/ns/ical/"
 
 ET.register_namespace("D", NS_DAV)
 ET.register_namespace("C", NS_CALDAV)
+ET.register_namespace("CR", NS_CARDDAV)
 ET.register_namespace("CS", NS_CS)
 ET.register_namespace("IC", NS_ICAL)
 
@@ -27,6 +29,10 @@ def dav(tag: str) -> str:
 
 def caldav(tag: str) -> str:
     return f"{{{NS_CALDAV}}}{tag}"
+
+
+def carddav(tag: str) -> str:
+    return f"{{{NS_CARDDAV}}}{tag}"
 
 
 def cs(tag: str) -> str:
@@ -51,7 +57,7 @@ def parse_xml(body: bytes) -> ET.Element | None:
     if _DOCTYPE.search(body):
         raise ValueError("les déclarations DTD ne sont pas acceptées")
     try:
-        return ET.fromstring(body)  # noqa: S314 - DTD refusée ci-dessus
+        return ET.fromstring(body)
     except ET.ParseError as exc:
         raise ValueError(f"XML invalide : {exc}") from exc
 

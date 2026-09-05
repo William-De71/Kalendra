@@ -33,7 +33,7 @@ REALM = 'Basic realm="Kalendra", charset="UTF-8"'
 
 #: Empreinte factice : garantit un coût de vérification identique pour un
 #: compte inexistant, afin de ne pas révéler quels identifiants existent.
-DUMMY_HASH = "pbkdf2_sha256$240000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+DUMMY_HASH = "pbkdf2_sha256$240000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="  # noqa: E501 (empreinte indivisible)
 
 
 class _AuthCache:
@@ -126,6 +126,8 @@ class Kalendra:
             )
             return text_response(200, payload, "application/json")
 
+        if path.startswith("/.well-known/carddav"):
+            return Response(301, b"", [("Location", f"{base}/"), ("Content-Length", "0")])
         if path.startswith("/.well-known/caldav"):
             return Response(301, b"", [("Location", f"{base}/"), ("Content-Length", "0")])
         if path.startswith("/.well-known/"):
@@ -147,7 +149,11 @@ class Kalendra:
         if segments and segments[0] == "view":
             if not self.config.admin_ui:
                 return error(404, "Interface web désactivée.")
-            return handle_view(self.db, self.config, request, segments[1:])
+            # Le jeton anti-CSRF sert à l'import : la vue est en lecture seule
+            # partout ailleurs, mais le formulaire de dépôt écrit, et le
+            # navigateur rejoue automatiquement les identifiants Basic.
+            token = csrf_token(self.db.secret_key(), user["username"])
+            return handle_view(self.db, self.config, request, segments[1:], token)
 
         if segments and segments[0] == "admin":
             if not user["is_admin"]:
@@ -169,7 +175,7 @@ class Kalendra:
             return None
         try:
             raw = base64.b64decode(header.split(" ", 1)[1]).decode("utf-8")
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         username, separator, password = raw.partition(":")
         if not separator:

@@ -7,7 +7,7 @@ from xml.etree import ElementTree as ET
 
 from .db import http_date
 from .resources import Kind, Resource, home_path, principal_path
-from .xmlutil import caldav, cs, dav, element, ical
+from .xmlutil import caldav, carddav, cs, dav, element, ical
 
 PRIVILEGES = ("read", "write", "write-properties", "write-content", "bind", "unbind", "read-acl")
 
@@ -15,6 +15,8 @@ REPORTS = (
     caldav("calendar-query"),
     caldav("calendar-multiget"),
     caldav("free-busy-query"),
+    carddav("addressbook-query"),
+    carddav("addressbook-multiget"),
     dav("sync-collection"),
     dav("principal-property-search"),
     dav("expand-property"),
@@ -41,7 +43,10 @@ def _resourcetype(resource: Resource, ctx: PropContext) -> ET.Element:
         ET.SubElement(node, dav("principal"))
     elif resource.kind == Kind.CALENDAR:
         ET.SubElement(node, dav("collection"))
-        ET.SubElement(node, caldav("calendar"))
+        if resource.collection_kind == "addressbook":
+            ET.SubElement(node, carddav("addressbook"))
+        else:
+            ET.SubElement(node, caldav("calendar"))
     return node
 
 
@@ -51,9 +56,12 @@ def _displayname(resource: Resource, ctx: PropContext) -> ET.Element | None:
     if resource.kind == Kind.PRINCIPALS:
         return element(dav("displayname"), "Principals")
     if resource.kind == Kind.PRINCIPAL and resource.user is not None:
-        return element(dav("displayname"), resource.user["display_name"] or resource.user["username"])
+        return element(
+            dav("displayname"), resource.user["display_name"] or resource.user["username"]
+        )
     if resource.kind == Kind.HOME and resource.user is not None:
-        return element(dav("displayname"), f"Agendas de {resource.user['username']}")
+        quoi = "Carnets" if resource.collection_kind == "addressbook" else "Agendas"
+        return element(dav("displayname"), f"{quoi} de {resource.user['username']}")
     if resource.kind == Kind.CALENDAR and resource.calendar is not None:
         return element(
             dav("displayname"), resource.calendar["display_name"] or resource.calendar["name"]
@@ -104,6 +112,47 @@ def _calendar_home_set(resource: Resource, ctx: PropContext) -> ET.Element | Non
     href = ET.SubElement(node, dav("href"))
     href.text = ctx.href(home_path(user["username"]))
     return node
+
+
+def _addressbook_home_set(resource: Resource, ctx: PropContext) -> ET.Element | None:
+    user = resource.user if resource.kind == Kind.PRINCIPAL else ctx.user
+    if user is None:
+        return None
+    node = element(carddav("addressbook-home-set"))
+    href = ET.SubElement(node, dav("href"))
+    href.text = ctx.href(home_path(user["username"], "addressbook"))
+    return node
+
+
+def _addressbook_description(resource: Resource, ctx: PropContext) -> ET.Element | None:
+    if resource.kind != Kind.CALENDAR or resource.calendar is None:
+        return None
+    if resource.collection_kind != "addressbook":
+        return None
+    return element(carddav("addressbook-description"), resource.calendar["description"] or "")
+
+
+def _supported_address_data(resource: Resource, ctx: PropContext) -> ET.Element | None:
+    if resource.collection_kind != "addressbook":
+        return None
+    node = element(carddav("supported-address-data"))
+    for version in ("3.0", "4.0"):
+        ET.SubElement(
+            node,
+            carddav("address-data-type"),
+            {"content-type": "text/vcard", "version": version},
+        )
+    return node
+
+
+def _address_data(resource: Resource, ctx: PropContext) -> ET.Element | None:
+    if resource.kind == Kind.OBJECT and resource.obj is not None:
+        return element(carddav("address-data"), resource.obj["data"])
+    return None
+
+
+def _max_resource_size_card(resource: Resource, ctx: PropContext) -> ET.Element:
+    return element(carddav("max-resource-size"), str(ctx.config.max_resource_size))
 
 
 def _calendar_user_address_set(resource: Resource, ctx: PropContext) -> ET.Element | None:
@@ -207,9 +256,16 @@ def _getetag(resource: Resource, ctx: PropContext) -> ET.Element | None:
 
 
 def _getcontenttype(resource: Resource, ctx: PropContext) -> ET.Element | None:
-    if resource.kind == Kind.OBJECT:
-        return element(dav("getcontenttype"), "text/calendar; charset=utf-8; component=vevent")
-    return None
+    if resource.kind != Kind.OBJECT:
+        return None
+    if resource.collection_kind == "addressbook":
+        return element(dav("getcontenttype"), "text/vcard; charset=utf-8")
+    composant = "vevent"
+    if resource.obj is not None and resource.obj["component"]:
+        composant = resource.obj["component"].lower()
+    return element(
+        dav("getcontenttype"), f"text/calendar; charset=utf-8; component={composant}"
+    )
 
 
 def _getcontentlength(resource: Resource, ctx: PropContext) -> ET.Element | None:
@@ -289,6 +345,11 @@ HANDLERS = {
     caldav("calendar-timezone"): _calendar_timezone,
     caldav("max-resource-size"): _max_resource_size,
     caldav("calendar-data"): _calendar_data,
+    carddav("addressbook-home-set"): _addressbook_home_set,
+    carddav("addressbook-description"): _addressbook_description,
+    carddav("supported-address-data"): _supported_address_data,
+    carddav("address-data"): _address_data,
+    carddav("max-resource-size"): _max_resource_size_card,
     cs("getctag"): _getctag,
     ical("calendar-color"): _calendar_color,
     ical("calendar-order"): _calendar_order,
@@ -308,6 +369,7 @@ ALLPROP = (
     cs("getctag"),
     dav("sync-token"),
     caldav("calendar-description"),
+    carddav("addressbook-description"),
     ical("calendar-color"),
 )
 

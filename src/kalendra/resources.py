@@ -6,6 +6,12 @@
     /calendars/<user>/                  calendar-home-set
     /calendars/<user>/<agenda>/         collection calendrier
     /calendars/<user>/<agenda>/<x>.ics  ressource calendrier
+    /addressbooks/<user>/               addressbook-home-set
+    /addressbooks/<user>/<carnet>/      collection carnet d'adresses
+    /addressbooks/<user>/<carnet>/<x>.vcf  carte de visite
+
+Les deux arbres ont la même forme : les carnets d'adresses réutilisent donc
+les mêmes `Kind`, distingués par `Resource.collection_kind`.
 """
 
 from __future__ import annotations
@@ -37,6 +43,8 @@ class Resource:
     calendar: sqlite3.Row | None = None
     obj: sqlite3.Row | None = None
     name: str = ""
+    #: "calendar" ou "addressbook" — quel arbre a produit cette ressource.
+    collection_kind: str = "calendar"
 
     @property
     def is_collection(self) -> bool:
@@ -57,16 +65,23 @@ def principal_path(username: str) -> str:
     return f"/principals/{href_quote(username)}/"
 
 
-def home_path(username: str) -> str:
-    return f"/calendars/{href_quote(username)}/"
+#: Racine d'URL de chaque type de collection.
+RACINE = {"calendar": "calendars", "addressbook": "addressbooks"}
 
 
-def calendar_path(username: str, calendar_name: str) -> str:
-    return f"/calendars/{href_quote(username)}/{href_quote(calendar_name)}/"
+def home_path(username: str, kind: str = "calendar") -> str:
+    return f"/{RACINE[kind]}/{href_quote(username)}/"
 
 
-def object_path(username: str, calendar_name: str, href: str) -> str:
-    return f"/calendars/{href_quote(username)}/{href_quote(calendar_name)}/{href_quote(href)}"
+def calendar_path(username: str, calendar_name: str, kind: str = "calendar") -> str:
+    return f"/{RACINE[kind]}/{href_quote(username)}/{href_quote(calendar_name)}/"
+
+
+def object_path(username: str, calendar_name: str, href: str, kind: str = "calendar") -> str:
+    return (
+        f"/{RACINE[kind]}/{href_quote(username)}/"
+        f"{href_quote(calendar_name)}/{href_quote(href)}"
+    )
 
 
 def resolve(db, segments: list[str], path: str) -> Resource:
@@ -84,8 +99,10 @@ def resolve(db, segments: list[str], path: str) -> Resource:
             return Resource(Kind.NOT_FOUND, path)
         return Resource(Kind.PRINCIPAL, principal_path(user["username"]), user=user)
 
-    if root != "calendars":
+    if root not in {"calendars", "addressbooks"}:
         return Resource(Kind.NOT_FOUND, path)
+
+    ck = "calendar" if root == "calendars" else "addressbook"
 
     if len(segments) == 1:
         return Resource(Kind.NOT_FOUND, path)
@@ -95,31 +112,45 @@ def resolve(db, segments: list[str], path: str) -> Resource:
         return Resource(Kind.NOT_FOUND, path)
 
     if len(segments) == 2:
-        return Resource(Kind.HOME, home_path(user["username"]), user=user)
+        return Resource(Kind.HOME, home_path(user["username"], ck), user=user, collection_kind=ck)
 
-    calendar = db.get_calendar(user["id"], segments[2])
+    calendar = db.get_calendar(user["id"], segments[2], ck)
     if len(segments) == 3:
         if calendar is None:
-            return Resource(Kind.MISSING_CALENDAR, path, user=user, name=segments[2])
+            return Resource(
+                Kind.MISSING_CALENDAR, path, user=user, name=segments[2], collection_kind=ck
+            )
         return Resource(
             Kind.CALENDAR,
-            calendar_path(user["username"], calendar["name"]),
+            calendar_path(user["username"], calendar["name"], ck),
             user=user,
             calendar=calendar,
             name=calendar["name"],
+            collection_kind=ck,
         )
 
     if len(segments) == 4:
         if calendar is None:
             return Resource(Kind.NOT_FOUND, path)
         obj = db.get_object(calendar["id"], segments[3])
-        target = object_path(user["username"], calendar["name"], segments[3])
+        target = object_path(user["username"], calendar["name"], segments[3], ck)
         if obj is None:
             return Resource(
-                Kind.MISSING_OBJECT, target, user=user, calendar=calendar, name=segments[3]
+                Kind.MISSING_OBJECT,
+                target,
+                user=user,
+                calendar=calendar,
+                name=segments[3],
+                collection_kind=ck,
             )
         return Resource(
-            Kind.OBJECT, target, user=user, calendar=calendar, obj=obj, name=segments[3]
+            Kind.OBJECT,
+            target,
+            user=user,
+            calendar=calendar,
+            obj=obj,
+            name=segments[3],
+            collection_kind=ck,
         )
 
     return Resource(Kind.NOT_FOUND, path)
@@ -135,25 +166,38 @@ def children(db, resource: Resource) -> list[Resource]:
             for user in db.list_users()
         ]
     if resource.kind == Kind.HOME and resource.user is not None:
+        ck = resource.collection_kind
+        collections = (
+            db.list_addressbooks(resource.user["id"])
+            if ck == "addressbook"
+            else db.list_calendars(resource.user["id"])
+        )
         return [
             Resource(
                 Kind.CALENDAR,
-                calendar_path(resource.user["username"], calendar["name"]),
+                calendar_path(resource.user["username"], calendar["name"], ck),
                 user=resource.user,
                 calendar=calendar,
                 name=calendar["name"],
+                collection_kind=ck,
             )
-            for calendar in db.list_calendars(resource.user["id"])
+            for calendar in collections
         ]
     if resource.kind == Kind.CALENDAR and resource.calendar is not None:
         return [
             Resource(
                 Kind.OBJECT,
-                object_path(resource.user["username"], resource.calendar["name"], obj["href"]),
+                object_path(
+                    resource.user["username"],
+                    resource.calendar["name"],
+                    obj["href"],
+                    resource.collection_kind,
+                ),
                 user=resource.user,
                 calendar=resource.calendar,
                 obj=obj,
                 name=obj["href"],
+                collection_kind=resource.collection_kind,
             )
             for obj in db.list_objects(resource.calendar["id"])
         ]

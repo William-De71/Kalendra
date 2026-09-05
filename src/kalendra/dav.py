@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from xml.etree import ElementTree as ET
 
 from . import __version__
@@ -19,14 +20,17 @@ from .ics import (
     text_matches,
 )
 from .props import PropContext, parse_sync_token, resolve_props, sync_token
-from .resources import Kind, Resource, children, resolve
+from .resources import Kind, Resource, children, object_path, resolve
 from .security import etag_for
+from .vcard import InvalidCardData, card_matches, parse_vcard
 from .xmlutil import (
     NS_CALDAV,
+    NS_CARDDAV,
     NS_DAV,
     STATUS_NOT_FOUND,
     STATUS_OK,
     caldav,
+    carddav,
     dav,
     multistatus,
     parse_xml,
@@ -37,7 +41,9 @@ from .xmlutil import (
 
 PRODID = f"-//Kalendra//Kalendra {__version__}//FR"
 
-DAV_COMPLIANCE = "1, 2, 3, access-control, calendar-access, extended-mkcol"
+# `addressbook` doit figurer ici : un client CardDAV qui ne le voit pas dans
+# la réponse OPTIONS conclut que le serveur ne gère pas les contacts.
+DAV_COMPLIANCE = "1, 2, 3, access-control, calendar-access, addressbook, extended-mkcol"
 
 ALLOW_COLLECTION = "OPTIONS, GET, HEAD, PROPFIND, PROPPATCH, REPORT, MKCALENDAR, MKCOL, DELETE"
 ALLOW_OBJECT = "OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, REPORT"
@@ -106,10 +112,10 @@ def _matches(row, comp: CompFilter) -> bool:
             row["data"], comp.name, prop.name, prop.text, negate=prop.negate
         ):
             return False
-    for sub in comp.comps:  # ex. VEVENT > VALARM : non indexé, on laisse passer
-        if sub.is_not_defined and row["component"] == sub.name:
-            return False
-    return True
+    # ex. VEVENT > VALARM : non indexé, on laisse passer
+    return all(
+        not (sub.is_not_defined and row["component"] == sub.name) for sub in comp.comps
+    )
 
 
 def filter_objects(db, calendar_id: int, root: CompFilter | None) -> list:
@@ -315,7 +321,12 @@ class DavHandler:
         if resource.kind == Kind.OBJECT and resource.obj is not None:
             body = resource.obj["data"].encode("utf-8")
             response = Response(200, b"" if request.method == "HEAD" else body)
-            response.header("Content-Type", "text/calendar; charset=utf-8")
+            type_mime = (
+                "text/vcard; charset=utf-8"
+                if resource.collection_kind == "addressbook"
+                else "text/calendar; charset=utf-8"
+            )
+            response.header("Content-Type", type_mime)
             response.header("Content-Length", str(len(body)))
             response.header("ETag", resource.obj["etag"])
             response.header("Last-Modified", http_date(resource.obj["updated_at"]))
@@ -328,13 +339,20 @@ class DavHandler:
 
     def put(self, request: Request, resource: Resource) -> Response:
         if resource.kind not in {Kind.OBJECT, Kind.MISSING_OBJECT} or resource.calendar is None:
-            return error(403, "PUT n'est autorisé que sur une ressource d'agenda.")
+            return error(403, "PUT n'est autorisé que sur une ressource de collection.")
         if not SAFE_HREF.match(resource.name):
             return error(400, "Nom de ressource invalide.")
 
-        content_type = request.header("content-type", "text/calendar").split(";")[0].strip()
-        if content_type and content_type not in {"text/calendar", "application/octet-stream", ""}:
-            return error(415, f"Type {content_type} non supporté ; attendu text/calendar.")
+        carnet = resource.collection_kind == "addressbook"
+        attendu = "text/vcard" if carnet else "text/calendar"
+        acceptes = (
+            {"text/vcard", "text/x-vcard", "application/octet-stream", ""}
+            if carnet
+            else {"text/calendar", "application/octet-stream", ""}
+        )
+        content_type = request.header("content-type", attendu).split(";")[0].strip()
+        if content_type and content_type not in acceptes:
+            return error(415, f"Type {content_type} non supporté ; attendu {attendu}.")
 
         if len(request.body) > self.config.max_resource_size:
             return error(413, "Ressource trop volumineuse.")
@@ -354,22 +372,40 @@ class DavHandler:
                 return error(412, "ETag différent : la ressource a changé côté serveur.")
 
         data = request.body.decode("utf-8", "replace")
-        try:
-            meta = parse_object(data)
-        except InvalidCalendarData as exc:
-            return self._precondition(caldav("valid-calendar-data"), str(exc))
 
-        allowed = {c.strip().upper() for c in str(resource.calendar["components"]).split(",")}
-        if meta.component not in allowed:
-            return self._precondition(
-                caldav("supported-calendar-component"),
-                f"{meta.component} n'est pas accepté par cet agenda.",
-            )
+        if carnet:
+            try:
+                card = parse_vcard(data)
+            except InvalidCardData as exc:
+                return self._precondition(carddav("valid-address-data"), str(exc))
+            # Un UID absent est toléré à l'analyse ; ici on lui substitue le nom
+            # de la ressource, seul identifiant dont le serveur soit sûr.
+            uid = card.uid or resource.name
+            composant, resume = "VCARD", card.fn
+            debut = fin = None
+            recurrent = False
+        else:
+            try:
+                meta = parse_object(data)
+            except InvalidCalendarData as exc:
+                return self._precondition(caldav("valid-calendar-data"), str(exc))
 
-        clash = self.db.get_object_by_uid(calendar_id, meta.uid)
+            allowed = {c.strip().upper() for c in str(resource.calendar["components"]).split(",")}
+            if meta.component not in allowed:
+                return self._precondition(
+                    caldav("supported-calendar-component"),
+                    f"{meta.component} n'est pas accepté par cet agenda.",
+                )
+            uid = meta.uid
+            composant, resume = meta.component, meta.summary
+            debut, fin = meta.start, meta.end
+            recurrent = meta.recurring
+
+        clash = self.db.get_object_by_uid(calendar_id, uid)
         if clash is not None and clash["href"] != resource.name:
             return self._precondition(
-                caldav("no-uid-conflict"), f"UID {meta.uid} déjà présent dans cet agenda."
+                carddav("no-uid-conflict") if carnet else caldav("no-uid-conflict"),
+                f"UID {uid} déjà présent dans cette collection.",
             )
 
         etag = etag_for(data)
@@ -377,12 +413,12 @@ class DavHandler:
             calendar_id,
             resource.name,
             data,
-            uid=meta.uid,
-            component=meta.component,
-            dtstart=meta.start,
-            dtend=meta.end,
-            recurring=meta.recurring,
-            summary=meta.summary,
+            uid=uid,
+            component=composant,
+            dtstart=debut,
+            dtend=fin,
+            recurring=recurrent,
+            summary=resume,
             etag=etag,
         )
         response = Response(204 if existing is not None else 201)
@@ -407,27 +443,35 @@ class DavHandler:
         return error(403, "Suppression non autorisée sur cette ressource.")
 
     def mkcalendar(self, request: Request, resource: Resource) -> Response:
+        carnet = resource.collection_kind == "addressbook"
+        quoi = "carnet" if carnet else "agenda"
         if resource.kind == Kind.CALENDAR:
-            return error(405, "Cet agenda existe déjà.")
+            return error(405, f"Ce {quoi} existe déjà.")
         if resource.kind != Kind.MISSING_CALENDAR or resource.user is None:
             return error(403, "Chemin invalide pour MKCALENDAR.")
         if not SAFE_HREF.match(resource.name):
-            return error(400, "Nom d'agenda invalide.")
+            return error(400, f"Nom de {quoi} invalide.")
         try:
             root = parse_xml(request.body)
         except ValueError as exc:
             return error(400, str(exc))
 
         options = self._collection_options(root)
-        self.db.create_calendar(
-            resource.user["id"],
-            resource.name,
-            display_name=options.get("display_name", resource.name),
-            description=options.get("description", ""),
-            color=options.get("color", "#3584e4"),
-            components=options.get("components", "VEVENT,VTODO"),
-            timezone_ics=options.get("timezone", ""),
-        )
+        try:
+            self.db.create_calendar(
+                resource.user["id"],
+                resource.name,
+                display_name=options.get("display_name", resource.name),
+                description=options.get("description", ""),
+                color=options.get("color", "#3584e4"),
+                components=options.get("components", "VCARD" if carnet else "VEVENT,VTODO"),
+                timezone_ics=options.get("timezone", ""),
+                kind="addressbook" if carnet else "calendar",
+            )
+        except sqlite3.IntegrityError:
+            # Nom déjà pris pour ce compte et ce type : c'est un conflit, pas
+            # une panne du serveur.
+            return error(409, f"Un {quoi} « {resource.name} » existe déjà.")
         return Response(201).header("Content-Length", "0")
 
     def mkcol(self, request: Request, resource: Resource) -> Response:
@@ -441,8 +485,19 @@ class DavHandler:
                 for node in root.iter()
                 if node.tag.startswith(f"{{{NS_CALDAV}}}")
             )
-            if not is_calendar and root.find(f".//{{{NS_DAV}}}resourcetype") is not None:
-                return error(403, "Seules les collections calendrier sont supportées.")
+            is_addressbook = any(
+                node.tag == carddav("addressbook")
+                for node in root.iter()
+                if node.tag.startswith(f"{{{NS_CARDDAV}}}")
+            )
+            if (
+                not is_calendar
+                and not is_addressbook
+                and root.find(f".//{{{NS_DAV}}}resourcetype") is not None
+            ):
+                return error(
+                    403, "Seuls les agendas et les carnets d'adresses sont supportés."
+                )
         return self.mkcalendar(request, resource)
 
     @staticmethod
@@ -454,7 +509,10 @@ class DavHandler:
             for child in prop:
                 if child.tag == dav("displayname"):
                     options["display_name"] = child.text or ""
-                elif child.tag == caldav("calendar-description"):
+                elif child.tag in (
+                    caldav("calendar-description"),
+                    carddav("addressbook-description"),
+                ):
                     options["description"] = child.text or ""
                 elif child.tag == caldav("calendar-timezone"):
                     options["timezone"] = child.text or ""
@@ -495,6 +553,12 @@ class DavHandler:
             return self._free_busy(request, resource, root)
         if root.tag == dav("principal-property-search"):
             return self._principal_search(request, resource, root)
+        if root.tag == carddav("addressbook-query"):
+            return self._addressbook_query(request, resource, root)
+        if root.tag == carddav("addressbook-multiget"):
+            # Même traitement que son équivalent calendrier : le rapport ne fait
+            # qu'énumérer des href, sans rien interpréter du contenu.
+            return self._calendar_multiget(request, resource, root)
         return error(501, f"REPORT {root.tag} non implémenté.")
 
     def _calendar_scope(self, resource: Resource) -> list[Resource]:
@@ -548,6 +612,57 @@ class DavHandler:
                 status.text = "HTTP/1.1 404 Not Found"
             else:
                 _fill_response(node, child, self.ctx, requested, allprop)
+            ms.append(node)
+        return xml_response(207, to_bytes(ms))
+
+    def _addressbook_query(
+        self, request: Request, resource: Resource, root: ET.Element
+    ) -> Response:
+        """REPORT `addressbook-query` (RFC 6352 §8.6).
+
+        Le filtre n'est pas traduit en SQL : on applique `card_matches` sur les
+        cartes de la collection. Comme côté calendrier, en cas de doute on
+        renvoie la carte plutôt que de la masquer.
+        """
+        if resource.kind != Kind.CALENDAR or resource.calendar is None:
+            return error(403, "addressbook-query nécessite un carnet d'adresses.")
+        if resource.collection_kind != "addressbook":
+            return error(403, "Cette collection n'est pas un carnet d'adresses.")
+
+        requested, allprop, _ = _requested_props(root)
+        besoin = ""
+        for node in root.iter(carddav("text-match")):
+            besoin = (node.text or "").strip()
+            if besoin:
+                break
+
+        ms = multistatus()
+        for row in self.db.list_objects(resource.calendar["id"]):
+            if besoin:
+                try:
+                    card = parse_vcard(row["data"])
+                except InvalidCardData:
+                    # Carte illisible : on la renvoie plutôt que de la perdre.
+                    pass
+                else:
+                    if not card_matches(card, besoin):
+                        continue
+            child = Resource(
+                Kind.OBJECT,
+                object_path(
+                    resource.user["username"],
+                    resource.calendar["name"],
+                    row["href"],
+                    "addressbook",
+                ),
+                user=resource.user,
+                calendar=resource.calendar,
+                obj=row,
+                name=row["href"],
+                collection_kind="addressbook",
+            )
+            node = response_node(child.path)
+            _fill_response(node, child, self.ctx, requested, allprop)
             ms.append(node)
         return xml_response(207, to_bytes(ms))
 
@@ -626,7 +741,7 @@ class DavHandler:
             "VERSION:2.0",
             f"PRODID:{PRODID}",
             "BEGIN:VFREEBUSY",
-            f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            f"DTSTAMP:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
         ]
         if start is not None:
             lines.append(f"DTSTART:{ical_utc(start)}")

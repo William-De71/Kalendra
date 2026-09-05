@@ -12,16 +12,16 @@ import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from kalendra import security  # noqa: E402
-from kalendra.app import Kalendra  # noqa: E402
-from kalendra.config import Config  # noqa: E402
-from kalendra.db import Database  # noqa: E402
-from kalendra.http import Request  # noqa: E402
+from kalendra import security
+from kalendra.app import Kalendra
+from kalendra.config import Config
+from kalendra.db import Database
+from kalendra.http import Request
 
 # Le coût PBKDF2 de production (~100 ms) rendrait la suite inutilement lente ;
 # l'algorithme testé reste le même, seul le facteur de travail change.
@@ -54,8 +54,22 @@ def make_event(
     return text.replace("\n", "\r\n").encode("utf-8")
 
 
+CARD_TEMPLATE = """BEGIN:VCARD
+VERSION:3.0
+UID:{uid}
+FN:{fn}
+N:{fn};;;;
+EMAIL:{email}
+END:VCARD
+"""
+
+
+def make_card(uid: str = "card-1", fn: str = "Jean Dupont", email: str = "jean@example.org") -> bytes:
+    return CARD_TEMPLATE.format(uid=uid, fn=fn, email=email).replace("\n", "\r\n").encode("utf-8")
+
+
 def ts(value: str) -> int:
-    moment = datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    moment = datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     return int(moment.timestamp())
 
 
