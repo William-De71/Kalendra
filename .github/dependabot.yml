@@ -1,27 +1,45 @@
 version: 2
+
+# Grouped and slowed down deliberately. The first push opened six separate
+# pull requests, which is a lot of noise for a project whose runtime
+# dependency list is empty: nothing Dependabot watches here ships to users
+# except the Docker base image.
 updates:
+  # The actions run with the workflow's own token, and GitHub retires old
+  # major versions periodically — worth tracking, but one pull request a
+  # month rather than one per action.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
     commit-message:
       prefix: "ci"
-    labels: ["dépendances", "ci"]
+    labels: ["dependencies", "ci"]
 
+  # The only third-party code actually shipped to users, so this one keeps a
+  # weekly cadence: security fixes for the base image arrive through it.
   - package-ecosystem: docker
     directory: "/"
     schedule:
       interval: weekly
     commit-message:
       prefix: "build"
-    labels: ["dépendances", "docker"]
+    labels: ["dependencies", "docker"]
 
-  # Kalendra n'a pas de dépendance d'exécution ; seules les dépendances de
-  # développement (ruff, caldav) sont déclarées dans pyproject.toml.
+  # `dependencies = []`, so this only ever sees the `dev` extras (ruff, caldav,
+  # pytest). Nothing here reaches a running Kalendra, hence the slow cadence —
+  # it exists to flag a major bump like caldav 2.x -> 3.x, which broke an
+  # integration test once already.
   - package-ecosystem: pip
     directory: "/"
     schedule:
-      interval: monthly
+      interval: quarterly
+    groups:
+      dev-tools:
+        patterns: ["*"]
     commit-message:
       prefix: "deps"
-    labels: ["dépendances"]
+    labels: ["dependencies"]
