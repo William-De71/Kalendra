@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kalendra"
-version = "1.0.0"
+version = "0.1.0"
 description = "Serveur CalDAV local, autonome, sur SQLite, avec flux ICS public pour Google Calendar et Proton Calendar"
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,10 +36,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OWNER/kalendra"
-Repository = "https://github.com/OWNER/kalendra"
-Issues = "https://github.com/OWNER/kalendra/issues"
-Changelog = "https://github.com/OWNER/kalendra/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/William-De71/kalendra"
+Repository = "https://github.com/William-De71/kalendra"
+Issues = "https://github.com/William-De71/kalendra/issues"
+Changelog = "https://github.com/William-De71/kalendra/blob/main/CHANGELOG.md"
 
 [project.scripts]
 kalendra = "kalendra.cli:main"
