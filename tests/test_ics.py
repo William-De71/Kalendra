@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from helpers import ts  # noqa: E402  (ajoute src/ au sys.path)
+from helpers import ts
 from kalendra.ics import (
     InvalidCalendarData,
     build_feed,
@@ -137,42 +137,42 @@ class ValidationTests(unittest.TestCase):
 
 class RecurrenceTests(unittest.TestCase):
     def test_hebdomadaire_multi_jours(self):
-        start = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)  # lundi
+        start = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)  # lundi
         rule = parse_rrule("FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4")
         dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, rule)]
         self.assertEqual(dates, ["20260105", "20260107", "20260112", "20260114"])
 
     def test_hebdomadaire_avec_intervalle(self):
-        start = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
         rule = parse_rrule("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;COUNT=3")
         dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, rule)]
         self.assertEqual(dates, ["20260105", "20260119", "20260202"])
 
     def test_mensuelle_ordinale_negative(self):
-        start = datetime(2026, 1, 30, 8, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 30, 8, 0, tzinfo=UTC)
         rule = parse_rrule("FREQ=MONTHLY;BYDAY=-1FR;COUNT=3")
         dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, rule)]
         self.assertEqual(dates, ["20260130", "20260227", "20260327"])
 
     def test_mensuelle_par_jour_du_mois(self):
-        start = datetime(2026, 1, 15, 8, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 1, 15, 8, 0, tzinfo=UTC)
         rule = parse_rrule("FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3")
         dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, rule)]
         self.assertEqual(dates, ["20260115", "20260215", "20260315"])
 
     def test_annuelle_avec_intervalle(self):
-        start = datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 7, 14, 10, 0, tzinfo=UTC)
         rule = parse_rrule("FREQ=YEARLY;INTERVAL=2;COUNT=3")
         dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, rule)]
         self.assertEqual(dates, ["20260714", "20280714", "20300714"])
 
     def test_quotidienne_bornee_par_until(self):
-        start = datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 3, 2, 9, 0, tzinfo=UTC)
         rule = parse_rrule("FREQ=DAILY;UNTIL=20260305T090000Z")
         self.assertEqual(last_occurrence(start, rule).strftime("%Y%m%d"), "20260305")
 
     def test_regle_infinie_renvoie_none(self):
-        start = datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 3, 2, 9, 0, tzinfo=UTC)
         self.assertIsNone(last_occurrence(start, parse_rrule("FREQ=DAILY")))
 
 

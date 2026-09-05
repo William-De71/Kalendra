@@ -14,10 +14,11 @@ qui suit le même chemin de découverte qu'Evolution ou Thunderbird.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import unittest
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 BASE_URL = os.environ.get("KALENDRA_TEST_URL", "")
 USERNAME = os.environ.get("KALENDRA_TEST_USER", "admin")
@@ -56,10 +57,8 @@ class RealClientTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        try:
+        with contextlib.suppress(Exception):
             cls.calendar.delete()
-        except Exception:  # noqa: BLE001 - le nettoyage ne doit pas masquer un échec
-            pass
 
     def test_decouverte_du_principal(self):
         self.assertTrue(str(self.principal.url).endswith(f"/principals/{USERNAME}/"))
@@ -69,11 +68,11 @@ class RealClientTests(unittest.TestCase):
         self.assertTrue(any(self.calendar_name in name for name in names))
 
     def test_creation_recherche_et_suppression(self):
-        start = datetime(2026, 3, 10, 9, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 3, 10, 9, 0, tzinfo=UTC)
         uid = f"int-{uuid.uuid4().hex[:8]}"
         payload = EVENT.format(
             uid=uid,
-            stamp=_fmt(datetime.now(timezone.utc)),
+            stamp=_fmt(datetime.now(UTC)),
             start=_fmt(start),
             end=_fmt(start + timedelta(hours=1)),
             summary="Revue integration",
@@ -98,18 +97,18 @@ class RealClientTests(unittest.TestCase):
         self.assertFalse(any(uid in item.data for item in remaining))
 
     def test_evenement_recurrent_visible_hors_premiere_occurrence(self):
-        start = datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc)  # un lundi
+        start = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)  # un lundi
         uid = f"rec-{uuid.uuid4().hex[:8]}"
         payload = EVENT.format(
             uid=uid,
-            stamp=_fmt(datetime.now(timezone.utc)),
+            stamp=_fmt(datetime.now(UTC)),
             start=_fmt(start),
             end=_fmt(start + timedelta(minutes=30)),
             summary="Stand-up",
         ).replace("END:VEVENT", "RRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT")
         self.calendar.save_event(payload)
 
-        far = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        far = datetime(2026, 6, 1, tzinfo=UTC)
         found = self.calendar.date_search(start=far, end=far + timedelta(days=7))
         self.assertTrue(any(uid in item.data for item in found))
 

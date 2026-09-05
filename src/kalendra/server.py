@@ -46,7 +46,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle(self) -> None:
         try:
             response = self._build_response()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("erreur interne sur %s %s", self.command, self.path)
             response = error(500, "Erreur interne.")
         self._write(response)
@@ -143,7 +143,7 @@ def serve(application: Kalendra, host: str, port: int) -> None:
     try:
         httpd.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:  # pragma: no cover
-        print("\nArrêt demandé.", file=sys.stderr)  # noqa: T201
+        print("\nArrêt demandé.", file=sys.stderr)
     finally:
         httpd.shutdown()
         httpd.server_close()

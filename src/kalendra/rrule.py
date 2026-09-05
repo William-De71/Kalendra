@@ -44,7 +44,9 @@ def parse_rrule(value: str) -> dict[str, object]:
                 rule[key] = int(raw)
             except ValueError:
                 continue
-        elif key in {"BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE", "BYSETPOS", "BYYEARDAY", "BYWEEKNO"}:
+        elif key in {
+            "BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE", "BYSETPOS", "BYYEARDAY", "BYWEEKNO",
+        }:
             values = []
             for part in raw.split(","):
                 try:

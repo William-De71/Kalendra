@@ -35,7 +35,9 @@ class Config:
     port: int = field(default_factory=lambda: _int("KALENDRA_PORT", 5232))
 
     #: Préfixe d'URL si le serveur est monté dans un sous-chemin ("" ou "/cal").
-    base_path: str = field(default_factory=lambda: os.environ.get("KALENDRA_BASE_PATH", "").rstrip("/"))
+    base_path: str = field(
+        default_factory=lambda: os.environ.get("KALENDRA_BASE_PATH", "").rstrip("/")
+    )
 
     #: URL publique, utilisée uniquement pour afficher les URLs dans l'UI admin.
     public_url: str = field(
@@ -43,10 +45,14 @@ class Config:
     )
 
     #: Taille maximale d'un objet calendrier accepté en PUT (octets).
-    max_resource_size: int = field(default_factory=lambda: _int("KALENDRA_MAX_RESOURCE_SIZE", 1_048_576))
+    max_resource_size: int = field(
+        default_factory=lambda: _int("KALENDRA_MAX_RESOURCE_SIZE", 1_048_576)
+    )
 
     #: Taille maximale d'un corps de requête XML (octets).
-    max_request_body: int = field(default_factory=lambda: _int("KALENDRA_MAX_REQUEST_BODY", 8_388_608))
+    max_request_body: int = field(
+        default_factory=lambda: _int("KALENDRA_MAX_REQUEST_BODY", 8_388_608)
+    )
 
     #: Active l'interface web d'administration.
     admin_ui: bool = field(default_factory=lambda: _bool("KALENDRA_ADMIN_UI", True))
