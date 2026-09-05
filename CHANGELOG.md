@@ -5,6 +5,22 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Ajouté
+
+- `CLAUDE.md` : mémoire du projet — décisions de conception, conventions et
+  pièges, lue automatiquement par Claude Code au démarrage d'une session.
+- Vue mensuelle en lecture seule sous `/view/` : grille du mois, récurrences
+  développées avec leurs exceptions, journées entières sur toute leur durée,
+  navigation entre les mois, page de détail d'un événement montrant sa source
+  iCalendar telle qu'elle est stockée.
+- `ics.expand_occurrences()` : développe un objet en instances concrètes, en
+  tenant compte de `RRULE`, `RDATE`, `EXDATE` et des remplacements par
+  `RECURRENCE-ID`.
+
+### Modifié
+
+- L'interface d'administration renvoie vers la vue mensuelle de chaque agenda.
+
 ## [1.0.0] — 2026-09-05
 
 ### Ajouté

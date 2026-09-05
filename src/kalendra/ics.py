@@ -477,6 +477,124 @@ def text_matches(data: str, component_name: str, prop: str, needle: str, negate:
     return (not found) if negate else found
 
 
+# ------------------------------------------------------------- occurrences
+
+
+@dataclass(slots=True)
+class Occurrence:
+    """Une instance concrète d'un objet calendrier, bornée en secondes UTC."""
+
+    start: int
+    end: int
+    all_day: bool
+    summary: str
+    uid: str
+    href: str = ""
+
+
+def expand_occurrences(
+    data: str,
+    start: int | None,
+    end: int | None,
+    *,
+    href: str = "",
+    limit: int = 400,
+) -> list[Occurrence]:
+    """Développe un objet en occurrences chevauchant [start, end).
+
+    Contrairement à `overlaps_range`, qui répond par oui ou non le plus vite
+    possible pour filtrer une réponse CalDAV, cette fonction produit les
+    instances elles-mêmes : c'est ce qu'il faut pour dessiner un calendrier.
+
+    Les composants portant un `RECURRENCE-ID` remplacent l'occurrence de la
+    série à cette date, comme le prévoit la RFC 5545 §3.8.4.4.
+    """
+    try:
+        calendar = parse_calendar(data)
+    except InvalidCalendarData:
+        return []
+
+    low = from_unix(start) if start is not None else DATETIME_MIN
+    high = from_unix(end) if end is not None else DATETIME_MAX
+
+    masters: list[Component] = []
+    overrides: dict[datetime, Component] = {}
+    for component in calendar.children:
+        if component.name not in OBJECT_COMPONENTS:
+            continue
+        recurrence_id = component.get("RECURRENCE-ID")
+        if recurrence_id is not None:
+            moment = to_utc(
+                parse_datetime_value(recurrence_id.value, recurrence_id.param("TZID"))
+            )
+            if moment is not None:
+                overrides[moment] = component
+                continue
+        masters.append(component)
+
+    results: list[Occurrence] = []
+
+    def emit(component: Component, begin: datetime, duration: timedelta) -> None:
+        finish = begin + duration
+        if begin >= high or finish <= low:
+            return
+        summary_prop = component.get("SUMMARY")
+        results.append(
+            Occurrence(
+                start=to_unix(begin),
+                end=to_unix(finish),
+                all_day=component_window(component)[2],
+                summary=summary_prop.text if summary_prop else "(sans titre)",
+                uid=component.value("UID"),
+                href=href,
+            )
+        )
+
+    for component in masters:
+        first, last, _ = component_window(component)
+        if first is None:
+            continue
+        duration = (last - first) if last else timedelta()
+        excluded = _exception_dates(component)
+
+        for moment in _extra_dates(component):
+            if moment not in excluded:
+                emit(overrides.get(moment, component), moment, duration)
+
+        rrule_prop = component.get("RRULE")
+        if rrule_prop is None:
+            if first not in excluded:
+                emit(overrides.get(first, component), first, duration)
+            continue
+
+        rule = parse_rrule(rrule_prop.value)
+        try:
+            produced = 0
+            for moment in iter_occurrences(first, rule, limit=limit, horizon=high):
+                if moment >= high:
+                    break
+                produced += 1
+                if produced > limit:
+                    break
+                if moment in excluded:
+                    continue
+                emit(overrides.get(moment, component), moment, duration)
+        except UnsupportedRule:
+            # Règle non gérée : on montre au moins la première occurrence.
+            emit(component, first, duration)
+
+    # Les remplacements peuvent avoir été déplacés hors de la série d'origine.
+    for moment, component in overrides.items():
+        if any(o.start == to_unix(moment) for o in results):
+            continue
+        begin, finish, _ = component_window(component)
+        if begin is not None:
+            emit(component, begin, (finish - begin) if finish else timedelta())
+
+    results.sort(key=lambda o: (o.start, o.summary))
+    return results
+
+
 # --------------------------------------------------------------- génération
 
 

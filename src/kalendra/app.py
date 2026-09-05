@@ -19,6 +19,7 @@ from urllib.parse import unquote
 
 from . import __version__
 from .admin import handle_admin
+from .calendarview import handle_view
 from .config import Config
 from .dav import DavHandler
 from .db import Database
@@ -142,6 +143,11 @@ class Kalendra:
         if user is None:
             return self._challenge()
         request.user = user
+
+        if segments and segments[0] == "view":
+            if not self.config.admin_ui:
+                return error(404, "Interface web désactivée.")
+            return handle_view(self.db, self.config, request, segments[1:])
 
         if segments and segments[0] == "admin":
             if not user["is_admin"]:

@@ -133,6 +133,29 @@ la même URL `…/feed/<jeton>.ics`. Proton rafraîchit environ toutes les heure
 
 ---
 
+## Consulter ses agendas depuis un navigateur
+
+`/view/` liste les agendas auxquels le compte connecté a accès, et
+`/view/<utilisateur>/<agenda>/` affiche une grille mensuelle : semaines
+commençant le lundi, récurrences développées, exceptions respectées, journées
+entières sur toute leur durée. Un clic sur un événement ouvre son détail, y
+compris sa source iCalendar brute. Les mois se parcourent par les liens
+« précédent » et « suivant », ou directement par `?m=2026-03`.
+
+C'est une **vue, pas un éditeur** : aucune écriture n'est possible depuis ces
+pages. Créer et modifier des événements reste le travail de votre client
+CalDAV, qui le fait mieux — fuseaux, récurrences avec exceptions, participants
+et rappels sont exactement là où un éditeur maison accumulerait les bugs, avec
+le risque de perdre des propriétés en réécrivant un objet.
+
+Les heures sont affichées dans le fuseau du serveur (variable `TZ` du
+conteneur). Les journées entières, elles, ne sont jamais converties : elles
+resteraient sinon décalées d'un jour dans les fuseaux à l'ouest de Greenwich.
+
+`KALENDRA_ADMIN_UI=false` coupe cette vue en même temps que l'administration.
+
+---
+
 ## Mise en production
 
 Kalendra parle HTTP en clair et s'appuie sur l'authentification HTTP Basic :
@@ -252,6 +275,8 @@ Microsoft courants), expansion des récurrences `FREQ`, `INTERVAL`, `COUNT`,
 
 ### Limites assumées
 
+- Pas d'édition d'événements depuis le navigateur : la vue mensuelle est en
+  lecture seule, par choix (voir la section précédente).
 - Pas de planification (`VFREEBUSY` inter-utilisateurs, boîtes
   `schedule-inbox` / `schedule-outbox` de la RFC 6638) : Kalendra ne fait pas
   d'invitations par courriel.
@@ -316,6 +341,7 @@ src/kalendra/
 ├── rrule.py       expansion des récurrences
 ├── feed.py        flux ICS publics
 ├── admin.py       interface web d'administration
+├── calendarview.py vue mensuelle en lecture seule
 └── cli.py         ligne de commande
 ```
 

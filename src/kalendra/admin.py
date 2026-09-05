@@ -173,7 +173,9 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
     parts = [
         "<header><h1>Kalendra</h1>"
         f"<span>v{escape(__version__)} · administration</span>"
-        f"<span class=muted>connecté : {escape(request.user['username'])}</span></header><main>"
+        f"<span class=muted>connecté : {escape(request.user['username'])}</span>"
+        f"<a href='{config.base_path}/view/' style='margin-left:auto'>Voir les agendas →</a>"
+        "</header><main>"
     ]
     if message:
         parts.append(f"<div class=flash>{escape(message)}</div>")
@@ -198,9 +200,14 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
                 if calendar["feed_enabled"] and calendar["feed_token"]
                 else "<span class=muted>désactivé</span>"
             )
+            vue = (
+                f"{config.base_path}/view/{quote(user['username'])}/"
+                f"{quote(calendar['name'])}/"
+            )
             rows.append(
                 "<tr>"
-                f"<td><strong>{escape(calendar['display_name'] or calendar['name'])}</strong>"
+                f"<td><a href='{vue}'><strong>"
+                f"{escape(calendar['display_name'] or calendar['name'])}</strong></a>"
                 f"<div class=muted><code>{escape(base)}/calendars/"
                 f"{escape(user['username'])}/{escape(calendar['name'])}/</code></div></td>"
                 f"<td>{count}</td>"

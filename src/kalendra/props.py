@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
 from .db import http_date
-from .http import href_quote
 from .resources import Kind, Resource, home_path, principal_path
 from .xmlutil import caldav, cs, dav, element, ical
 
