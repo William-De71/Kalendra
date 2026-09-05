@@ -109,10 +109,10 @@ jobs:
           done
           echo "Le conteneur n'est pas devenu sain"; docker logs kalendra-ci; exit 1
 
-      - name: Test de fumée HTTP
+      - name: Vérification de mise en service
         run: |
-          chmod +x scripts/smoke.sh
-          ./scripts/smoke.sh http://127.0.0.1:5232 "${ADMIN_USER}" "${ADMIN_PASSWORD}"
+          chmod +x scripts/verify-deployment.sh
+          ./scripts/verify-deployment.sh http://127.0.0.1:5232 "${ADMIN_USER}" "${ADMIN_PASSWORD}"
 
       - name: Validation avec un client CalDAV réel
         run: |

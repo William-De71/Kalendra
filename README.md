@@ -286,10 +286,11 @@ Analyse statique :
 pipx install ruff && ruff check src tests
 ```
 
-Test de fumée contre un conteneur en cours d'exécution :
+Vérification de bout en bout contre une instance en cours d'exécution (fonctionne
+aussi bien contre un conteneur local que contre votre déploiement réel) :
 
 ```sh
-./scripts/smoke.sh http://127.0.0.1:5232 admin motdepasse
+./scripts/verify-deployment.sh http://127.0.0.1:5232 admin motdepasse
 ```
 
 Validation avec un vrai client tiers (nécessite `pip install caldav`) :

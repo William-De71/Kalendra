@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Test de fumée d'un conteneur Kalendra déjà démarré.
+# Vérification de mise en service d'une instance Kalendra déjà démarrée.
 #
-#   scripts/smoke.sh [URL_DE_BASE] [IDENTIFIANT] [MOT_DE_PASSE]
+#   scripts/verify-deployment.sh [URL_DE_BASE] [IDENTIFIANT] [MOT_DE_PASSE]
 #
 # Vérifie la chaîne complète : santé, découverte CalDAV, création d'agenda,
 # dépôt d'un événement, requête temporelle, synchronisation et flux ICS.
@@ -12,7 +12,7 @@ BASE="${1:-http://127.0.0.1:5232}"
 USER="${2:-${KALENDRA_ADMIN_USER:-admin}}"
 PASS="${3:-${KALENDRA_ADMIN_PASSWORD:-motdepasse}}"
 AUTH=(-u "${USER}:${PASS}")
-CAL="${BASE}/calendars/${USER}/fumee/"
+CAL="${BASE}/calendars/${USER}/verification/"
 
 failures=0
 
@@ -67,17 +67,17 @@ echo "== Cycle de vie d'un agenda"
 curl -sS -o /dev/null -X DELETE "${AUTH[@]}" "${CAL}" || true
 check "MKCALENDAR" "201" "$(status -X MKCALENDAR "${AUTH[@]}" "${CAL}")"
 
-event=$'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//smoke//FR\r\nBEGIN:VEVENT\r\nUID:smoke-1\r\nDTSTAMP:20260101T090000Z\r\nDTSTART:20260310T090000Z\r\nDTEND:20260310T100000Z\r\nSUMMARY:Test de fumee\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
+event=$'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kalendra-verification//FR\r\nBEGIN:VEVENT\r\nUID:verification-1\r\nDTSTAMP:20260101T090000Z\r\nDTSTART:20260310T090000Z\r\nDTEND:20260310T100000Z\r\nSUMMARY:Verification de mise en service\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
 check "PUT événement" "201" \
-    "$(status -X PUT -H 'Content-Type: text/calendar' "${AUTH[@]}" --data-binary "$event" "${CAL}smoke-1.ics")"
-contains "GET événement" "UID:smoke-1" "$(curl -sS "${AUTH[@]}" "${CAL}smoke-1.ics")"
+    "$(status -X PUT -H 'Content-Type: text/calendar' "${AUTH[@]}" --data-binary "$event" "${CAL}verification-1.ics")"
+contains "GET événement" "UID:verification-1" "$(curl -sS "${AUTH[@]}" "${CAL}verification-1.ics")"
 check "PUT invalide refusé" "403" \
     "$(status -X PUT -H 'Content-Type: text/calendar' "${AUTH[@]}" --data 'pas du tout ical' "${CAL}mauvais.ics")"
 
 echo "== Rapports CalDAV"
 query='<?xml version="1.0"?><C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260301T000000Z" end="20260401T000000Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>'
 report=$(curl -sS -X REPORT -H 'Depth: 1' -H 'Content-Type: application/xml' "${AUTH[@]}" --data "$query" "${CAL}")
-contains "calendar-query (plage)" "smoke-1.ics" "$report"
+contains "calendar-query (plage)" "verification-1.ics" "$report"
 
 sync='<?xml version="1.0"?><D:sync-collection xmlns:D="DAV:"><D:sync-token/><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>'
 synced=$(curl -sS -X REPORT -H 'Depth: 1' -H 'Content-Type: application/xml' "${AUTH[@]}" --data "$sync" "${CAL}")
