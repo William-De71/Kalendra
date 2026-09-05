@@ -1,0 +1,127 @@
+name: Préparer une version
+
+# Chemin manuel : Actions → « Préparer une version » → patch / minor / major.
+# Le workflow calcule le numéro, met à jour `__version__` et le CHANGELOG,
+# committe, puis pousse l'étiquette `vX.Y.Z`.
+#
+# C'est ce `git push` de l'étiquette qui déclenche `release.yml` : les deux
+# chemins — bouton ou `git push --tags` depuis un poste — aboutissent donc au
+# même workflow de publication, sans duplication de logique.
+
+on:
+  workflow_dispatch:
+    inputs:
+      niveau:
+        description: "Niveau de version"
+        required: true
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      dry_run:
+        description: "Simuler : calcule et vérifie sans rien pousser"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  preparer:
+    name: Calculer, vérifier et étiqueter
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # On refuse de publier depuis une branche de travail : l'étiquette doit
+      # désigner un état de `main`, sans quoi l'image publiée ne correspondrait
+      # pas au code de référence.
+      - name: La branche doit être main
+        run: |
+          if [ "${{ github.ref_name }}" != "main" ]; then
+            echo "Lancez ce workflow depuis main (branche actuelle : ${{ github.ref_name }})."
+            exit 1
+          fi
+
+      # Vérifier avant d'écrire : une version poussée sur du code rouge devrait
+      # être retirée, et une étiquette ne se retire pas proprement.
+      - name: Suite de tests
+        run: python -m unittest discover -s tests -t tests
+
+      - name: Lint
+        run: |
+          pipx install ruff
+          ruff check src tests
+
+      - name: Calculer la version
+        id: bump
+        run: |
+          version=$(python scripts/bump-version.py "${{ inputs.niveau }}")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Nouvelle version : ${version}"
+
+      - name: L'étiquette ne doit pas déjà exister
+        run: |
+          tag="v${{ steps.bump.outputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "L'étiquette $tag existe déjà."
+            exit 1
+          fi
+
+      - name: Récapitulatif
+        run: |
+          {
+            echo "## Version ${{ steps.bump.outputs.version }} (${{ inputs.niveau }})"
+            echo ""
+            echo '### Modifications préparées'
+            echo ''
+            echo '```diff'
+            git --no-pager diff -- src/kalendra/__init__.py CHANGELOG.md | head -80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Simulation — on s'arrête là
+        if: inputs.dry_run
+        run: |
+          echo "Simulation : aucun commit, aucune étiquette poussée." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Committer et étiqueter
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/kalendra/__init__.py CHANGELOG.md
+          git commit -m "chore: version ${VERSION}"
+          git tag -a "v${VERSION}" -m "Kalendra ${VERSION}"
+          git push origin HEAD:main
+          # Pousser l'étiquette en dernier : c'est elle qui déclenche
+          # `release.yml`, et le commit doit déjà être sur main à ce moment.
+          git push origin "v${VERSION}"
+          echo "Étiquette v${VERSION} poussée." >> "$GITHUB_STEP_SUMMARY"
+
+  publier:
+    name: Publier
+    needs: [preparer]
+    if: ${{ !inputs.dry_run }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: v${{ needs.preparer.outputs.version }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write

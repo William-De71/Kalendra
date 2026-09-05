@@ -3,6 +3,15 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  # Appelable par « Préparer une version » : un push effectué avec le
+  # GITHUB_TOKEN ne redéclenche aucun workflow (protection anti-boucle de
+  # GitHub), donc l'étiquette seule ne suffirait pas à lancer la publication.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Étiquette à publier (ex. v1.0.0)"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -26,6 +35,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -34,16 +45,14 @@ jobs:
       - name: Déterminer la version
         id: version
         run: |
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          ref="${{ inputs.tag || github.ref_name }}"
           version="${ref#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Version publiée : ${version}"
 
       - name: La version du paquet doit correspondre à l'étiquette
         run: |
-          declared=$(python -c "import re,pathlib; \
-print(re.search(r'__version__ = \"([^\"]+)\"', \
-pathlib.Path('src/kalendra/__init__.py').read_text()).group(1))")
+          declared=$(python scripts/bump-version.py --show)
           expected="${{ steps.version.outputs.version }}"
           if [ "$declared" != "$expected" ]; then
             echo "kalendra.__version__ = $declared mais l'étiquette annonce $expected"
@@ -62,6 +71,8 @@ pathlib.Path('src/kalendra/__init__.py').read_text()).group(1))")
     needs: [verify]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: docker/setup-qemu-action@v3
 
@@ -116,6 +127,7 @@ pathlib.Path('src/kalendra/__init__.py').read_text()).group(1))")
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -150,7 +162,7 @@ pathlib.Path('src/kalendra/__init__.py').read_text()).group(1))")
       - name: Publier la release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           name: Kalendra ${{ needs.verify.outputs.version }}
           body_path: release-notes.md
           files: dist/*
