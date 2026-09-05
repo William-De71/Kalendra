@@ -84,8 +84,13 @@ synced=$(curl -sS -X REPORT -H 'Depth: 1' -H 'Content-Type: application/xml' "${
 contains "sync-collection initiale" "urn:kalendra:sync:" "$synced"
 
 echo "== Flux ICS public"
-token=$(curl -sS -H 'Accept: text/html' "${AUTH[@]}" "${BASE}/admin" \
-    | grep -o "/feed/[A-Za-z0-9_-]\+\.ics" | head -n 1)
+# Les URLs de flux vivent sur la fiche d'un compte, pas sur la page d'accueil
+# de l'administration : `|| true` parce que `set -e` tuerait le script sans
+# message si le motif était absent, en renvoyant un code de succès trompeur.
+uid=$(curl -sS -H 'Accept: text/html' "${AUTH[@]}" "${BASE}/admin" \
+    | grep -o "/admin/users/[0-9]\+" | head -n 1 | grep -o "[0-9]\+" || true)
+token=$(curl -sS -H 'Accept: text/html' "${AUTH[@]}" "${BASE}/admin/users/${uid:-0}" \
+    | grep -o "/feed/[A-Za-z0-9_-]\+\.ics" | head -n 1 || true)
 if [[ -z "$token" ]]; then
     echo "  KO   aucune URL de flux trouvée dans l'interface d'administration"
     failures=$((failures + 1))
@@ -95,7 +100,40 @@ else
     contains "flux ICS nommé" "X-WR-CALNAME" "$feed"
 fi
 
+echo "== CardDAV"
+AB="${BASE}/addressbooks/${USER}/verification/"
+mkcol='<?xml version="1.0"?><D:mkcol xmlns:D="DAV:" xmlns:CR="urn:ietf:params:xml:ns:carddav"><D:set><D:prop><D:resourcetype><D:collection/><CR:addressbook/></D:resourcetype></D:prop></D:set></D:mkcol>'
+check "MKCOL carnet" "201" \
+    "$(status -X MKCOL -H 'Content-Type: application/xml' "${AUTH[@]}" --data "$mkcol" "${AB}")"
+card=$'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:verif-card-1\r\nFN:Verification Kalendra\r\nEMAIL:verif@example.org\r\nEND:VCARD\r\n'
+check "PUT carte" "201" \
+    "$(status -X PUT -H 'Content-Type: text/vcard' "${AUTH[@]}" --data-binary "$card" "${AB}verif-card-1.vcf")"
+contains "GET carte" "FN:Verification Kalendra" "$(curl -sS "${AUTH[@]}" "${AB}verif-card-1.vcf")"
+abquery='<?xml version="1.0"?><CR:addressbook-query xmlns:D="DAV:" xmlns:CR="urn:ietf:params:xml:ns:carddav"><D:prop><D:getetag/></D:prop><CR:filter/></CR:addressbook-query>'
+contains "addressbook-query" "verif-card-1.vcf" \
+    "$(curl -sS -X REPORT -H 'Depth: 1' -H 'Content-Type: application/xml' "${AUTH[@]}" --data "$abquery" "${AB}")"
+contains "OPTIONS annonce addressbook" "addressbook" \
+    "$(curl -sS -i -X OPTIONS "${AUTH[@]}" "${AB}" | grep -i '^dav:')"
+
+echo "== Import d'un .ics depuis l'interface web"
+csrf=$(curl -sS -H 'Accept: text/html' "${AUTH[@]}" "${BASE}/view/${USER}/verification/" \
+    | grep -o "name=csrf value='[a-f0-9]*'" | head -n 1 | cut -d"'" -f2)
+if [[ -z "$csrf" ]]; then
+    echo "  KO   aucun jeton CSRF dans le formulaire d'import"
+    failures=$((failures + 1))
+else
+    agrege=$'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//verif//FR\r\nBEGIN:VEVENT\r\nUID:imp-a\r\nDTSTAMP:20260101T090000Z\r\nDTSTART:20260701T090000Z\r\nDTEND:20260701T100000Z\r\nSUMMARY:Import A\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:imp-b\r\nDTSTAMP:20260101T090000Z\r\nDTSTART:20260702T090000Z\r\nDTEND:20260702T100000Z\r\nSUMMARY:Import B\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
+    tmp=$(mktemp); printf '%s' "$agrege" > "$tmp"
+    check "POST import" "303" \
+        "$(status -X POST "${AUTH[@]}" -F "csrf=${csrf}" -F "fichier=@${tmp};type=text/calendar" \
+            "${BASE}/view/${USER}/verification/import")"
+    rm -f "$tmp"
+    contains "événement importé présent" "SUMMARY:Import A" \
+        "$(curl -sS "${AUTH[@]}" "${CAL}imp-a.ics")"
+fi
+
 echo "== Nettoyage"
+check "DELETE carnet" "204" "$(status -X DELETE "${AUTH[@]}" "${AB}")"
 check "DELETE agenda" "204" "$(status -X DELETE "${AUTH[@]}" "${CAL}")"
 
 if (( failures > 0 )); then
