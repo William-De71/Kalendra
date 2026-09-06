@@ -13,19 +13,10 @@ from urllib.parse import parse_qs, quote
 from . import __version__
 from .http import Request, Response, error, text_response
 from .security import csrf_valid
+from .webui import BASE_STYLE, rail, titre
 
+# Palette, body and sidebar live in webui.BASE_STYLE, prepended to this one.
 STYLE = """
-:root { color-scheme: light dark; --bg:#fbfbfd; --fg:#16161d; --muted:#606070;
-  --line:#dcdce4; --card:#fff; --accent:#3054c8; --danger:#b3261e; }
-@media (prefers-color-scheme: dark) { :root { --bg:#15151a; --fg:#e9e9ef;
-  --muted:#a0a0b0; --line:#2c2c36; --card:#1d1d24; --accent:#8aa6ff; --danger:#f2836b; } }
-* { box-sizing:border-box; }
-body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 ui-sans-serif,
-  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header { padding:20px 24px; border-bottom:1px solid var(--line); display:flex;
-  align-items:baseline; gap:12px; flex-wrap:wrap; }
-header h1 { margin:0; font-size:19px; letter-spacing:-.01em; }
-header span { color:var(--muted); font-size:13px; }
 main { max-width:1040px; margin:0 auto; padding:24px; }
 section { background:var(--card); border:1px solid var(--line); border-radius:12px;
   padding:18px 20px; margin-bottom:22px; }
@@ -69,11 +60,13 @@ footer { color:var(--muted); font-size:12.5px; padding:0 24px 32px; max-width:10
 """
 
 
-def _page(title: str, body: str) -> Response:
+def _page(title: str, body: str, base: str = "", username: str = "") -> Response:
     html = (
         "<!doctype html><html lang=fr><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width, initial-scale=1">'
-        f"<title>{escape(title)}</title><style>{STYLE}</style></head><body>{body}</body></html>"
+        f"<title>{escape(title)}</title><style>{BASE_STYLE}{STYLE}</style></head><body>"
+        + rail(base, "admin", True, username, __version__)
+        + f"<div class=zone>{body}</div></body></html>"
     )
     return text_response(200, html, "text/html; charset=utf-8")
 
@@ -232,11 +225,7 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
     users = db.list_users()
 
     parts = [
-        "<header><h1>Kalendra</h1>"
-        f"<span>v{escape(__version__)} · administration</span>"
-        f"<span class=muted>connecté : {escape(request.user['username'])}</span>"
-        f"<a href='{config.base_path}/view/' style='margin-left:auto'>Voir les agendas →</a>"
-        "</header><main>"
+        titre("<h1>Administration</h1>") + "<main>"
     ]
     if message:
         parts.append(f"<div class=flash>{escape(message)}</div>")
@@ -347,7 +336,12 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
         "DAVx5 et iOS ; flux ICS en lecture seule pour Google Calendar et Proton Calendar, "
         "qui ne savent pas parler CalDAV à un serveur tiers.</footer>"
     )
-    return _page("Kalendra — administration", "".join(parts))
+    return _page(
+        "Kalendra — administration",
+        "".join(parts),
+        config.base_path,
+        request.user["username"],
+    )
 
 
 def _user_page(db, config, request: Request, token: str, user_id: int) -> Response:
@@ -367,10 +361,11 @@ def _user_page(db, config, request: Request, token: str, user_id: int) -> Respon
     badge = " <span class=badge>admin</span>" if user["is_admin"] else ""
 
     parts = [
-        "<header><h1>Kalendra</h1>"
-        f"<span>v{escape(__version__)} · {escape(user['username'])}</span>"
-        f"<a href='{bp}/admin' style='margin-left:auto'>← tous les utilisateurs</a>"
-        "</header><main>"
+        titre(
+            f"<h1>{escape(user['username'])}</h1>",
+            f"<a href='{bp}/admin'>← tous les comptes</a>",
+        )
+        + "<main>"
     ]
     if message:
         parts.append(f"<div class=flash>{escape(message)}</div>")
@@ -497,7 +492,12 @@ def _user_page(db, config, request: Request, token: str, user_id: int) -> Respon
         "<p class=muted>Les agendas et leurs objets sont supprimés avec le compte.</p>"
         "</section></main>"
     )
-    return _page(f"Kalendra — {user['username']}", "".join(parts))
+    return _page(
+        f"Kalendra — {user['username']}",
+        "".join(parts),
+        bp,
+        request.user["username"],
+    )
 
 
 def _button(

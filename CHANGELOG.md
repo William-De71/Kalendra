@@ -5,6 +5,28 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Ajouté
+
+- Barre latérale de navigation commune aux deux interfaces web, avec le compte
+  connecté et son rôle en pied de barre.
+- Dans `/view/`, les agendas et les carnets d'un administrateur sont groupés
+  par compte propriétaire.
+
+### Modifié
+
+- Le port du conteneur est publié sur toutes les interfaces
+  (`5232:5232`) : lié à `127.0.0.1`, le serveur n'était joignable que depuis la
+  machine hôte. Restreindre à la boucle locale reste pertinent derrière un
+  reverse proxy installé sur cette même machine.
+- `KALENDRA_PUBLIC_URL` disparaît du `docker-compose.yml` et de
+  `.env.example` : elle n'a d'utilité que derrière un reverse proxy, et la
+  valeur d'exemple laissait croire qu'elle était obligatoire.
+
+### Corrigé
+
+- Hauteur de l'en-tête des pages web, qui variait d'une page à l'autre, et
+  liens de navigation rendus tantôt en boutons tantôt en liens simples.
+
 ## [1.0.0] — 2026-09-05
 
 ### Ajouté

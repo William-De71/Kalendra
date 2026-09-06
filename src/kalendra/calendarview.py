@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from html import escape
 from urllib.parse import parse_qs, quote
 
+from . import __version__
 from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
     Occurrence,
@@ -31,6 +32,7 @@ from .importics import importer
 from .resources import Kind, resolve
 from .security import csrf_valid
 from .vcard import InvalidCardData, parse_vcard
+from .webui import BASE_STYLE, rail, titre
 
 MOIS = (
     "janvier",
@@ -53,22 +55,10 @@ JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"
 MAX_PAR_JOUR = 4
 
 STYLE = """
-:root { color-scheme: light dark; --bg:#fbfbfd; --fg:#16161d; --muted:#606070;
-  --line:#dcdce4; --card:#fff; --accent:#3054c8; --hors:#f2f2f6; --today:#fff8e1; }
-@media (prefers-color-scheme: dark) { :root { --bg:#15151a; --fg:#e9e9ef;
-  --muted:#a0a0b0; --line:#2c2c36; --card:#1d1d24; --accent:#8aa6ff;
-  --hors:#191920; --today:#2a2416; } }
-* { box-sizing:border-box; }
-body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,
-  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-a { color:var(--accent); }
-header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex;
-  align-items:center; gap:14px; flex-wrap:wrap; }
-header h1 { margin:0; font-size:18px; letter-spacing:-.01em; }
-header .pastille { width:12px; height:12px; border-radius:3px; display:inline-block; }
-header nav { margin-left:auto; display:flex; gap:8px; align-items:center; }
-header nav a { text-decoration:none; border:1px solid var(--line); border-radius:8px;
-  padding:5px 11px; color:var(--fg); background:var(--card); }
+/* Palette, body and sidebar come from webui.BASE_STYLE; only the two shades
+   the month grid needs are added here. */
+:root { --hors:#f2f2f6; --today:#fff8e1; }
+@media (prefers-color-scheme: dark) { :root { --hors:#191920; --today:#2a2416; } }
 main { padding:20px 24px 40px; }
 .mois { font-size:17px; font-weight:600; text-transform:capitalize; }
 table.grille { width:100%; border-collapse:collapse; table-layout:fixed;
@@ -123,6 +113,14 @@ ul.agendas { list-style:none; padding:0; margin:0; }
 ul.agendas li { border:1px solid var(--line); border-radius:10px; padding:12px 14px;
   margin-bottom:10px; background:var(--card); display:flex; align-items:center; gap:10px; }
 ul.agendas a { font-weight:600; text-decoration:none; }
+ul.agendas .compteur { color:var(--muted); font-size:13px; margin-left:auto; }
+h2.section { font-size:13px; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--muted); margin:26px 0 12px; }
+h2.section:first-child { margin-top:0; }
+/* Owner heading, shown only to an administrator: the accounts are the outline
+   of the page, so they sit closer to their list than to the block above. */
+h3.proprietaire { font-size:14px; margin:18px 0 8px; color:var(--fg); }
+h3.proprietaire:first-of-type { margin-top:0; }
 footer { color:var(--muted); font-size:12.5px; padding:0 24px 32px; }
 @media (max-width:640px) {
   table.grille td { height:82px; }
@@ -230,22 +228,18 @@ def remplir(
 # -------------------------------------------------------------------- rendu
 
 
-def _page(titre: str, corps: str) -> Response:
+def _page(
+    titre_page: str, corps: str, base: str = "", admin: bool = False, connecte: str = ""
+) -> Response:
     html = (
         "<!doctype html><html lang=fr><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width, initial-scale=1">'
-        f"<title>{escape(titre)}</title><style>{STYLE}</style></head><body>{corps}</body></html>"
+        f"<title>{escape(titre_page)}</title><style>{BASE_STYLE}{STYLE}</style>"
+        "</head><body>"
+        + rail(base, "agendas", admin, connecte, __version__)
+        + f"<div class=zone>{corps}</div></body></html>"
     )
     return text_response(200, html, "text/html; charset=utf-8")
-
-
-def _lien_admin(base: str, admin: bool) -> str:
-    """Link back to the admin UI, for administrators only.
-
-    A plain user would get a 403 on /admin: better not to show them the door
-    than to let them walk into it.
-    """
-    return f"<a href='{base}/admin'>administration</a>" if admin else ""
 
 
 def _lien_mois(base: str, user: str, nom: str, annee: int, mois: int) -> str:
@@ -302,12 +296,13 @@ def rendre_mois(
     admin: bool = False,
     token: str = "",
     message: str = "",
+    connecte: str = "",
 ) -> Response:
     base = config.base_path
     pa, pm = mois_precedent(annee, mois)
     sa, sm = mois_suivant(annee, mois)
     nom = calendar_row["name"]
-    titre = calendar_row["display_name"] or nom
+    titre_agenda = calendar_row["display_name"] or nom
 
     lignes = []
     for semaine in semaines:
@@ -333,19 +328,16 @@ def rendre_mois(
     total = sum(len(jour.evenements) for semaine in semaines for jour in semaine)
 
     corps = (
-        "<header>"
-        "<span class=pastille style='background:"
-        f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
-        f"<h1>{escape(titre)}</h1>"
-        f"<span class=mois>{MOIS[mois - 1]} {annee}</span>"
-        "<nav>"
-        f"<a href='{_lien_mois(base, user, nom, pa, pm)}'>← précédent</a>"
-        f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>"
-        "aujourd'hui</a>"
-        f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>suivant →</a>"
-        f"<a href='{base}/view/'>agendas</a>"
-        f"{_lien_admin(base, admin)}"
-        "</nav></header>"
+        titre(
+            "<span class=pastille style='background:"
+            f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
+            f"<h1>{escape(titre_agenda)}</h1>"
+            f"<span class=meta>{MOIS[mois - 1]} {annee}</span>",
+            f"<a href='{_lien_mois(base, user, nom, pa, pm)}'>←</a>"
+            f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>"
+            "aujourd'hui</a>"
+            f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>→</a>",
+        )
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + f"<main><table class=grille><tr>{entetes}</tr>{''.join(lignes)}</table>"
         + _formulaire_import(base, user, nom, token)
@@ -354,11 +346,18 @@ def rendre_mois(
         f"{'s' if total > 1 else ''} · vue en lecture seule : "
         "pour créer ou modifier un événement, utilisez votre client CalDAV.</footer>"
     )
-    return _page(f"{titre} — {MOIS[mois - 1]} {annee}", corps)
+    return _page(
+        f"{titre_agenda} — {MOIS[mois - 1]} {annee}",
+        corps,
+        base,
+        admin,
+        connecte,
+    )
 
 
 def rendre_index(
-    db, config, user_row, admin: bool, token: str = "", message: str = ""
+    db, config, user_row, admin: bool, token: str = "", message: str = "",
+    connecte: str = "",
 ) -> Response:
     base = config.base_path
     if admin:
@@ -366,36 +365,47 @@ def rendre_index(
     else:
         agendas = [(user_row["username"], row) for row in db.list_calendars(user_row["id"])]
 
-    elements = []
-    for proprietaire, row in agendas:
-        compte = db.calendar_stats(row["id"])
-        cible = f"{base}/view/{quote(proprietaire)}/{quote(row['name'])}/"
-        elements.append(
-            "<li>"
-            f"<span class=pastille style='background:{escape(row['color'] or '#3584e4')};"
-            "width:12px;height:12px;border-radius:3px;display:inline-block'></span>"
-            f"<a href='{cible}'>{escape(row['display_name'] or row['name'])}</a>"
-            f"<span style='color:var(--muted);font-size:13px'>{proprietaire} · "
-            f"{compte} objet{'s' if compte > 1 else ''}</span></li>"
-        )
-
     if admin:
         carnets = [(row["username"], row) for row in db.list_all_addressbooks()]
     else:
         carnets = [(user_row["username"], row) for row in db.list_addressbooks(user_row["id"])]
 
-    fiches = []
-    for proprietaire, row in carnets:
+    def ligne(proprietaire: str, row, prefixe: str, unite: str) -> str:
         compte = db.calendar_stats(row["id"])
-        cible = f"{base}/view/contacts/{quote(proprietaire)}/{quote(row['name'])}/"
-        fiches.append(
+        cible = f"{base}/view/{prefixe}{quote(proprietaire)}/{quote(row['name'])}/"
+        return (
             "<li>"
-            f"<span class=pastille style='background:{escape(row['color'] or '#3584e4')};"
-            "width:12px;height:12px;border-radius:3px;display:inline-block'></span>"
+            f"<span class=pastille style='background:{escape(row['color'] or '#3584e4')}'>"
+            "</span>"
             f"<a href='{cible}'>{escape(row['display_name'] or row['name'])}</a>"
-            f"<span style='color:var(--muted);font-size:13px'>{proprietaire} · "
-            f"{compte} contact{'s' if compte > 1 else ''}</span></li>"
+            f"<span class=compteur>{compte} {unite}{'s' if compte > 1 else ''}</span></li>"
         )
+
+    # Grouped by account for an administrator, who sees everyone's: a flat list
+    # mixing accounts forces the reader to check the owner on every row. A
+    # plain user only ever sees their own, so a heading would be noise.
+    def liste(entrees, prefixe: str, unite: str, vide: str) -> str:
+        if not entrees:
+            return f"<ul class=agendas><li class=vide>{vide}</li></ul>"
+        if not admin:
+            return (
+                "<ul class=agendas>"
+                + "".join(ligne(p, row, prefixe, unite) for p, row in entrees)
+                + "</ul>"
+            )
+        par_compte: dict[str, list] = {}
+        for proprietaire, row in entrees:
+            par_compte.setdefault(proprietaire, []).append(row)
+        blocs = []
+        for proprietaire in sorted(par_compte, key=str.casefold):
+            lignes_compte = "".join(
+                ligne(proprietaire, row, prefixe, unite) for row in par_compte[proprietaire]
+            )
+            blocs.append(
+                f"<h3 class=proprietaire>{escape(proprietaire)}</h3>"
+                f"<ul class=agendas>{lignes_compte}</ul>"
+            )
+        return "".join(blocs)
 
     creation = ""
     if token:
@@ -443,25 +453,27 @@ def rendre_index(
         )
 
     corps = (
-        f"<header><h1>Agendas</h1><nav>{_lien_admin(base, admin)}</nav></header>"
+        titre("<h1>Agendas et contacts</h1>")
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
-        + "<main><ul class=agendas>"
-        + ("".join(elements) or "<li class=vide>Aucun agenda.</li>")
-        + "</ul>"
+        + "<main><h2 class=section>Agendas</h2>"
+        + liste(agendas, "", "objet", "Aucun agenda.")
         + creation
-        + "<h1 style='font-size:18px;margin:26px 0 12px'>Carnets d'adresses</h1>"
-        + "<ul class=agendas>"
-        + ("".join(fiches) or "<li class=vide>Aucun carnet.</li>")
-        + "</ul></main>"
+        + "<h2 class=section>Carnets d'adresses</h2>"
+        + liste(carnets, "contacts/", "contact", "Aucun carnet.")
+        + "</main>"
     )
-    return _page("Kalendra — agendas et carnets", corps)
+    return _page(
+        "Kalendra — agendas et carnets", corps, base, admin, connecte
+    )
 
 
-def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Response:
+def rendre_carnet(
+    db, config, carnet_row, user: str, admin: bool = False, connecte: str = ""
+) -> Response:
     """List an address book's cards, sorted by display name."""
     base = config.base_path
     nom = carnet_row["name"]
-    titre = carnet_row["display_name"] or nom
+    titre_carnet = carnet_row["display_name"] or nom
 
     fiches = []
     for row in db.list_objects(carnet_row["id"]):
@@ -489,13 +501,12 @@ def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Res
         )
 
     corps = (
-        "<header>"
-        "<span class=pastille style='background:"
-        f"{escape(carnet_row['color'] or '#3584e4')}'></span>"
-        f"<h1>{escape(titre)}</h1>"
-        f"<nav><a href='{base}/view/'>agendas</a>"
-        f"{_lien_admin(base, admin)}</nav></header>"
-        "<main><table class=grille style='table-layout:auto'>"
+        titre(
+            "<span class=pastille style='background:"
+            f"{escape(carnet_row['color'] or '#3584e4')}'></span>"
+            f"<h1>{escape(titre_carnet)}</h1>"
+        )
+        + "<main><table class=grille style='table-layout:auto'>"
         "<tr><th>Nom</th><th>Courriel</th></tr>"
         + (
             "".join(lignes)
@@ -506,10 +517,12 @@ def rendre_carnet(db, config, carnet_row, user: str, admin: bool = False) -> Res
         "vue en lecture seule : pour modifier une fiche, utilisez votre client "
         "CardDAV.</footer>"
     )
-    return _page(f"{titre} — contacts", corps)
+    return _page(f"{titre_carnet} — contacts", corps, base, admin, connecte)
 
 
-def rendre_contact(config, carnet_row, user: str, row, admin: bool = False) -> Response:
+def rendre_contact(
+    config, carnet_row, user: str, row, admin: bool = False, connecte: str = ""
+) -> Response:
     """One card in detail: the common properties, then the raw source."""
     base = config.base_path
     nom = carnet_row["name"]
@@ -518,7 +531,7 @@ def rendre_contact(config, carnet_row, user: str, row, admin: bool = False) -> R
     except InvalidCardData:
         card = None
 
-    titre = (card.fn if card and card.fn else "") or row["summary"] or "(sans nom)"
+    titre_fiche = (card.fn if card and card.fn else "") or row["summary"] or "(sans nom)"
 
     lignes: list[tuple[str, str]] = []
     if card is not None:
@@ -550,19 +563,21 @@ def rendre_contact(config, carnet_row, user: str, row, admin: bool = False) -> R
     retour = f"{base}/view/contacts/{quote(user)}/{quote(nom)}/"
 
     corps = (
-        f"<header><h1>{escape(titre)}</h1>"
-        f"<nav><a href='{retour}'>← retour au carnet</a>"
-        f"<a href='{base}/view/'>agendas</a>"
-        f"{_lien_admin(base, admin)}</nav></header>"
-        f"<main><section class=detail><h2>{escape(titre)}</h2><dl>{definitions}</dl>"
+        titre(
+            f"<h1>{escape(titre_fiche)}</h1>",
+            f"<a href='{retour}'>← retour au carnet</a>",
+        )
+        + f"<main><section class=detail><h2>{escape(titre_fiche)}</h2><dl>{definitions}</dl>"
         f"<pre>{escape(row['data'])}</pre></section></main>"
         "<footer>Contenu affiché tel qu'il est stocké : Kalendra ne réécrit jamais "
         "une carte de visite.</footer>"
     )
-    return _page(titre, corps)
+    return _page(titre_fiche, corps, base, admin, connecte)
 
 
-def rendre_objet(config, calendar_row, user: str, row, tz, admin: bool = False) -> Response:
+def rendre_objet(
+    config, calendar_row, user: str, row, tz, admin: bool = False, connecte: str = ""
+) -> Response:
     base = config.base_path
     nom = calendar_row["name"]
     try:
@@ -632,16 +647,16 @@ def rendre_objet(config, calendar_row, user: str, row, tz, admin: bool = False) 
     )
 
     corps = (
-        f"<header><h1>{escape(resume)}</h1>"
-        f"<nav><a href='{retour}'>← retour au mois</a>"
-        f"<a href='{base}/view/'>agendas</a>"
-        f"{_lien_admin(base, admin)}</nav></header>"
-        f"<main><section class=detail><h2>{escape(resume)}</h2><dl>{definitions}</dl>"
+        titre(
+            f"<h1>{escape(resume)}</h1>",
+            f"<a href='{retour}'>← retour au mois</a>",
+        )
+        + f"<main><section class=detail><h2>{escape(resume)}</h2><dl>{definitions}</dl>"
         f"<pre>{escape(row['data'])}</pre></section></main>"
         "<footer>Contenu affiché tel qu'il est stocké : Kalendra ne réécrit jamais "
         "un objet calendrier.</footer>"
     )
-    return _page(resume, corps)
+    return _page(resume, corps, base, admin, connecte)
 
 
 # ------------------------------------------------------------------ routage
@@ -809,10 +824,16 @@ def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Res
 
     if resource.kind == Kind.OBJECT:
         return rendre_contact(
-            config, resource.calendar, resource.user["username"], resource.obj, admin
+            config,
+            resource.calendar,
+            resource.user["username"],
+            resource.obj,
+            admin,
+            user_row["username"],
         )
     return rendre_carnet(
-        db, config, resource.calendar, resource.user["username"], admin
+        db, config, resource.calendar, resource.user["username"], admin,
+        user_row["username"],
     )
 
 
@@ -842,7 +863,8 @@ def handle_view(
 
     if not segments:
         return rendre_index(
-            db, config, user_row, admin, token, request.query_param("msg")
+            db, config, user_row, admin, token, request.query_param("msg"),
+            user_row["username"],
         )
 
     # Contacts live under a dedicated prefix: a calendar name and an address
@@ -864,7 +886,13 @@ def handle_view(
 
     if resource.kind == Kind.OBJECT:
         return rendre_objet(
-            config, resource.calendar, resource.user["username"], resource.obj, tz, admin
+            config,
+            resource.calendar,
+            resource.user["username"],
+            resource.obj,
+            tz,
+            admin,
+            user_row["username"],
         )
 
     aujourdhui = datetime.now(tz).date() if tz else datetime.now().date()
@@ -883,4 +911,5 @@ def handle_view(
         admin,
         token,
         request.query_param("msg"),
+        user_row["username"],
     )
