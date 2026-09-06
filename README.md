@@ -52,8 +52,8 @@ il faudrait passer par l'API Google Calendar et un jeton OAuth.
 
 ## Démarrage rapide
 
-Rien à cloner : un `docker-compose.yml` de trois douzaines de lignes suffit,
-avec l'image publiée.
+Ce `docker-compose.yml` démarre le serveur sur le port 5232, crée le compte
+administrateur et conserve la base dans un volume `kalendra-data`.
 
 ```yaml
 services:
@@ -62,16 +62,20 @@ services:
     container_name: kalendra
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5232:5232"
+      # Publié sur toutes les interfaces : le serveur est joignable depuis le
+      # réseau local. Derrière un reverse proxy TLS installé sur la même
+      # machine, préférez "127.0.0.1:5232:5232" pour n'exposer que le proxy.
+      - 5232:5232
     volumes:
       - kalendra-data:/data
     environment:
       # Compte administrateur créé au tout premier démarrage uniquement.
       KALENDRA_ADMIN_USER: "admin"
       KALENDRA_ADMIN_PASSWORD: "changez-moi-vraiment"
-      # URL publique telle que vue par les clients : sert aux URLs affichées
-      # dans l'interface d'administration.
-      KALENDRA_PUBLIC_URL: "https://cal.example.org"
+      # Facultatif : à ne renseigner que derrière un reverse proxy, pour que
+      # l'interface d'administration affiche l'URL publique plutôt que celle
+      # de la requête reçue.
+      # KALENDRA_PUBLIC_URL: "https://cal.example.org"
       TZ: "Europe/Paris"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5232/health', timeout=4).status==200 else 1)"]
@@ -96,7 +100,8 @@ Le tag `:1` suit toutes les versions 1.x, correctifs et nouveautés compris,
 sans rupture de compatibilité. Épinglez `:1.0.0` si vous préférez décider
 vous-même quand mettre à jour.
 
-Puis ouvrez <http://localhost:5232/admin> avec le compte administrateur : la
+Puis ouvrez `/admin` sur l'adresse de la machine qui héberge Docker — par
+exemple <http://192.168.1.10:5232/admin> — avec le compte administrateur. La
 page liste les comptes, et la fiche de chacun affiche l'URL CalDAV de ses
 agendas, celle de ses carnets d'adresses et l'URL de chaque flux ICS.
 
@@ -110,11 +115,10 @@ Sans docker-compose :
 
 ```sh
 docker run -d --name kalendra \
-  -p 127.0.0.1:5232:5232 \
+  -p 5232:5232 \
   -v kalendra-data:/data \
   -e KALENDRA_ADMIN_USER=admin \
   -e KALENDRA_ADMIN_PASSWORD='…' \
-  -e KALENDRA_PUBLIC_URL=https://cal.example.org \
   ghcr.io/william-de71/kalendra:1
 ```
 
@@ -320,7 +324,7 @@ Tout passe par l'environnement.
 | Variable | Défaut | Rôle |
 | --- | --- | --- |
 | `KALENDRA_DB` | `/data/kalendra.db` | Chemin de la base SQLite |
-| `KALENDRA_HOST` | `0.0.0.0` | Interface d'écoute |
+| `KALENDRA_HOST` | `0.0.0.0` | Interface d'écoute *dans* le conteneur — à laisser telle quelle : l'accès réseau se règle par `ports:` |
 | `KALENDRA_PORT` | `5232` | Port d'écoute |
 | `KALENDRA_BASE_PATH` | *(vide)* | Préfixe d'URL derrière un proxy |
 | `KALENDRA_PUBLIC_URL` | *(déduit)* | URL publique affichée dans l'admin |

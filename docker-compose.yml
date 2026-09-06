@@ -7,15 +7,13 @@ services:
     container_name: kalendra
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5232:5232"
+      - 5232:5232
     volumes:
       - kalendra-data:/data
     environment:
       # Compte administrateur créé au tout premier démarrage uniquement.
       KALENDRA_ADMIN_USER: "${KALENDRA_ADMIN_USER:-admin}"
       KALENDRA_ADMIN_PASSWORD: "${KALENDRA_ADMIN_PASSWORD:?definissez KALENDRA_ADMIN_PASSWORD dans .env}"
-      # URL publique, telle que vue par les clients (sert aux URLs affichées).
-      KALENDRA_PUBLIC_URL: "${KALENDRA_PUBLIC_URL:-http://localhost:5232}"
       KALENDRA_LOG_LEVEL: "info"
       TZ: "${TZ:-Europe/Paris}"
     healthcheck:
