@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kalendra"
-version = "1.0.0"
+version = "1.1.0"
 description = "Self-hosted CalDAV & CardDAV server on a single SQLite file, with public ICS feeds for Google Calendar and Proton Calendar"
 readme = "README.md"
 license = { text = "MIT" }
