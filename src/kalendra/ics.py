@@ -337,6 +337,46 @@ def _extra_dates(component: Component) -> list[datetime]:
     return extra
 
 
+def local_start(component: Component) -> datetime | None:
+    """DTSTART as written — in its own zone — which is where a rule recurs.
+
+    RFC 5545 expands a rule in DTSTART's time zone: "every Monday at 10:00
+    Europe/Paris" stays at 10:00 across daylight saving time, so 09:00 UTC in
+    winter and 08:00 UTC in summer. Expanding the UTC instant instead would
+    shift every summer occurrence by an hour, and EXDATE and RECURRENCE-ID
+    would stop matching. A DATE or a floating time stays naive, which `to_utc`
+    reads as UTC, like everywhere else.
+    """
+    raw = _prop_datetime(component, "DTSTART")
+    if raw is None:
+        return None
+    if not isinstance(raw, datetime):
+        return datetime(raw.year, raw.month, raw.day)
+    return raw
+
+
+def recurrences(
+    component: Component, rule: dict, *, limit: int, horizon: datetime | None = None
+):
+    """UTC occurrences of a rule, expanded in DTSTART's own zone."""
+    start = local_start(component)
+    if start is None:
+        return
+    if horizon is not None and start.tzinfo is None:
+        # Naive (floating) times cannot be compared with an aware horizon.
+        horizon = horizon.astimezone(UTC).replace(tzinfo=None)
+    for moment in iter_occurrences(start, rule, limit=limit, horizon=horizon):
+        yield to_utc(moment)
+
+
+def last_recurrence(component: Component, rule: dict) -> datetime | None:
+    start = local_start(component)
+    if start is None:
+        return None
+    final = last_occurrence(start, rule)
+    return to_utc(final) if final is not None else None
+
+
 # -------------------------------------------------------------- métadonnées
 
 
@@ -388,7 +428,7 @@ def parse_object(data: str) -> ObjectMeta:
         if rrule_prop is not None and start is not None:
             recurring = True
             rule = parse_rrule(rrule_prop.value)
-            final = last_occurrence(start, rule)
+            final = last_recurrence(component, rule)
             if final is None:
                 unbounded = True
             else:
@@ -445,7 +485,7 @@ def overlaps_range(data: str, start: int | None, end: int | None) -> bool:
         rule = parse_rrule(rrule_prop.value)
         try:
             count = 0
-            for moment in iter_occurrences(first, rule, limit=MAX_EXPANSION, horizon=high):
+            for moment in recurrences(component, rule, limit=MAX_EXPANSION, horizon=high):
                 if moment >= high:
                     break
                 count += 1
@@ -492,31 +532,18 @@ class Occurrence:
     href: str = ""
 
 
-def expand_occurrences(
-    data: str,
-    start: int | None,
-    end: int | None,
-    *,
-    href: str = "",
-    limit: int = 400,
-) -> list[Occurrence]:
-    """Expand an object into occurrences overlapping [start, end).
+@dataclass(slots=True)
+class Instance:
+    """One occurrence, still tied to the component that describes it."""
 
-    Unlike `overlaps_range`, which answers yes or no as fast as it can in order
-    to filter a CalDAV response, this function produces the instances
-    themselves: that is what drawing a calendar requires.
+    component: Component
+    start: datetime
+    duration: timedelta
+    #: Original start in the series, for RECURRENCE-ID; None for a lone event.
+    recurrence_id: datetime | None
 
-    Components carrying a `RECURRENCE-ID` override the series occurrence at
-    that date, as RFC 5545 §3.8.4.4 prescribes.
-    """
-    try:
-        calendar = parse_calendar(data)
-    except InvalidCalendarData:
-        return []
 
-    low = from_unix(start) if start is not None else DATETIME_MIN
-    high = from_unix(end) if end is not None else DATETIME_MAX
-
+def _split_overrides(calendar: Component) -> tuple[list[Component], dict[datetime, Component]]:
     masters: list[Component] = []
     overrides: dict[datetime, Component] = {}
     for component in calendar.children:
@@ -531,24 +558,39 @@ def expand_occurrences(
                 overrides[moment] = component
                 continue
         masters.append(component)
+    return masters, overrides
 
-    results: list[Occurrence] = []
 
-    def emit(component: Component, begin: datetime, duration: timedelta) -> None:
+def iter_instances(
+    calendar: Component, start: int | None, end: int | None, *, limit: int = 400
+) -> list[Instance]:
+    """Instances of a parsed object overlapping [start, end), sorted by start.
+
+    Components carrying a `RECURRENCE-ID` override the series occurrence at
+    that date, as RFC 5545 §3.8.4.4 prescribes.
+    """
+    low = from_unix(start) if start is not None else DATETIME_MIN
+    high = from_unix(end) if end is not None else DATETIME_MAX
+    masters, overrides = _split_overrides(calendar)
+    results: list[Instance] = []
+    used: set[datetime] = set()
+
+    def emit(
+        component: Component, begin: datetime, duration: timedelta, rid, substitute: bool = True
+    ) -> None:
+        if substitute and rid is not None and rid in overrides:
+            used.add(rid)
+            component = overrides[rid]
+            # The override carries its own time: it may have been moved.
+            own_start, own_end, _ = component_window(component)
+            if own_start is not None:
+                begin = own_start
+                duration = (own_end - own_start) if own_end else timedelta()
+        # RFC 4791 §9.9: a zero-length instance overlaps when it starts inside.
         finish = begin + duration
-        if begin >= high or finish <= low:
+        if begin >= high or (finish <= low and not (duration == timedelta() and begin >= low)):
             return
-        summary_prop = component.get("SUMMARY")
-        results.append(
-            Occurrence(
-                start=to_unix(begin),
-                end=to_unix(finish),
-                all_day=component_window(component)[2],
-                summary=summary_prop.text if summary_prop else "(sans titre)",
-                uid=component.value("UID"),
-                href=href,
-            )
-        )
+        results.append(Instance(component, begin, duration, rid))
 
     for component in masters:
         first, last, _ = component_window(component)
@@ -556,21 +598,22 @@ def expand_occurrences(
             continue
         duration = (last - first) if last else timedelta()
         excluded = _exception_dates(component)
+        rrule_prop = component.get("RRULE")
+        recurrent = rrule_prop is not None or bool(component.all("RDATE"))
 
         for moment in _extra_dates(component):
             if moment not in excluded:
-                emit(overrides.get(moment, component), moment, duration)
+                emit(component, moment, duration, moment)
 
-        rrule_prop = component.get("RRULE")
         if rrule_prop is None:
             if first not in excluded:
-                emit(overrides.get(first, component), first, duration)
+                emit(component, first, duration, first if recurrent else None)
             continue
 
         rule = parse_rrule(rrule_prop.value)
         try:
             produced = 0
-            for moment in iter_occurrences(first, rule, limit=limit, horizon=high):
+            for moment in recurrences(component, rule, limit=limit, horizon=high):
                 if moment >= high:
                     break
                 produced += 1
@@ -578,21 +621,183 @@ def expand_occurrences(
                     break
                 if moment in excluded:
                     continue
-                emit(overrides.get(moment, component), moment, duration)
+                emit(component, moment, duration, moment)
         except UnsupportedRule:
             # Unsupported rule: show at least the first occurrence.
-            emit(component, first, duration)
+            emit(component, first, duration, first)
 
-    # Overrides may have been moved outside the original series.
+    # Overrides may have been moved outside the original series, or into the
+    # range from an occurrence outside it.
     for moment, component in overrides.items():
-        if any(o.start == to_unix(moment) for o in results):
+        if moment in used:
             continue
         begin, finish, _ = component_window(component)
         if begin is not None:
-            emit(component, begin, (finish - begin) if finish else timedelta())
+            duration = (finish - begin) if finish else timedelta()
+            emit(component, begin, duration, moment, substitute=False)
 
+    results.sort(key=lambda i: (i.start, i.component.value("SUMMARY")))
+    return results
+
+
+def expand_occurrences(
+    data: str,
+    start: int | None,
+    end: int | None,
+    *,
+    href: str = "",
+    limit: int = 400,
+) -> list[Occurrence]:
+    """Expand an object into occurrences overlapping [start, end).
+
+    Unlike `overlaps_range`, which answers yes or no as fast as it can in order
+    to filter a CalDAV response, this function produces the instances
+    themselves: that is what drawing a calendar requires.
+    """
+    try:
+        calendar = parse_calendar(data)
+    except InvalidCalendarData:
+        return []
+
+    results = []
+    for instance in iter_instances(calendar, start, end, limit=limit):
+        summary_prop = instance.component.get("SUMMARY")
+        results.append(
+            Occurrence(
+                start=to_unix(instance.start),
+                end=to_unix(instance.start + instance.duration),
+                all_day=component_window(instance.component)[2],
+                summary=summary_prop.text if summary_prop else "(sans titre)",
+                uid=instance.component.value("UID"),
+                href=href,
+            )
+        )
     results.sort(key=lambda o: (o.start, o.summary))
     return results
+
+
+# ------------------------------------------------- expansion côté serveur
+
+
+#: Properties `<C:expand>` recomputes for each instance; every other line of
+#: the component is copied as stored.
+_EXPANDED = {"DTSTART", "DTEND", "DUE", "RRULE", "RDATE", "EXDATE", "EXRULE", "RECURRENCE-ID"}
+
+
+def _split_raw(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """VCALENDAR header lines and raw top-level blocks, in document order."""
+    header: list[str] = []
+    depth = 0
+    for line in unfold(text):
+        upper = line.upper()
+        if upper.startswith("BEGIN:"):
+            depth += 1
+        elif upper.startswith("END:"):
+            depth -= 1
+        elif depth == 1:
+            header.append(line)
+    return header, iter_top_level_blocks(text)
+
+
+def _stamp(moment: datetime, all_day: bool, name: str) -> str:
+    if all_day:
+        return f"{name};VALUE=DATE:{moment:%Y%m%d}"
+    return f"{name}:{ical_utc(moment)}"
+
+
+def _instance_lines(raw: list[str], instance: Instance, all_day: bool) -> list[str]:
+    own = {
+        line.split(":", 1)[0].split(";", 1)[0].upper()
+        for line in raw[1:-1]
+    }
+    lines = [raw[0], _stamp(instance.start, all_day, "DTSTART")]
+    finish = instance.start + instance.duration
+    if "DTEND" in own:
+        lines.append(_stamp(finish, all_day, "DTEND"))
+    elif "DUE" in own:
+        lines.append(_stamp(finish, all_day, "DUE"))
+    if instance.recurrence_id is not None:
+        lines.append(_stamp(instance.recurrence_id, all_day, "RECURRENCE-ID"))
+    depth = 0
+    for line in raw[1:-1]:
+        upper = line.upper()
+        if upper.startswith("BEGIN:"):
+            depth += 1
+        elif upper.startswith("END:"):
+            depth -= 1
+        elif depth == 0 and line.split(":", 1)[0].split(";", 1)[0].upper() in _EXPANDED:
+            continue
+        lines.append(line)
+    lines.append(raw[-1])
+    return lines
+
+
+def expand_calendar(data: str, start: int | None, end: int | None) -> str:
+    """Answer `<C:expand>` (RFC 4791 §9.6.5): one component per instance.
+
+    The stored object is not touched: this is a view computed for one
+    response. Each instance keeps every line of its component except the
+    recurrence properties, replaced by its own DTSTART/DTEND in UTC and a
+    RECURRENCE-ID. VTIMEZONE blocks are dropped, the RFC requiring UTC.
+    When anything is in doubt, the object goes out as stored.
+    """
+    try:
+        calendar = parse_calendar(data)
+        header, blocks = _split_raw(data)
+    except InvalidCalendarData:
+        return data
+    if len(blocks) != len(calendar.children):
+        return data
+    raw_of = {id(c): lines for c, (_, lines) in zip(calendar.children, blocks, strict=True)}
+
+    body: list[str] = []
+    for component in calendar.children:
+        if component.name in OBJECT_COMPONENTS and component_window(component)[0] is None:
+            body.extend(raw_of[id(component)])  # nothing to expand: as stored
+    for instance in iter_instances(calendar, start, end, limit=MAX_EXPANSION):
+        all_day = component_window(instance.component)[2]
+        body.extend(_instance_lines(raw_of[id(instance.component)], instance, all_day))
+    lines = ["BEGIN:VCALENDAR", *header, *body, "END:VCALENDAR"]
+    return "\r\n".join(fold(line) for line in lines) + "\r\n"
+
+
+def limit_recurrence_set(data: str, start: int | None, end: int | None) -> str:
+    """Answer `<C:limit-recurrence-set>` (RFC 4791 §9.6.6).
+
+    The master component stays whole; overridden instances that neither start
+    nor originally started within the range are left out.
+    """
+    try:
+        calendar = parse_calendar(data)
+        _, blocks = _split_raw(data)
+    except InvalidCalendarData:
+        return data
+    if len(blocks) != len(calendar.children):
+        return data
+    low = from_unix(start) if start is not None else DATETIME_MIN
+    high = from_unix(end) if end is not None else DATETIME_MAX
+
+    dropped: set[int] = set()
+    for index, component in enumerate(calendar.children):
+        rid = component.get("RECURRENCE-ID")
+        if component.name not in OBJECT_COMPONENTS or rid is None:
+            continue
+        original = to_utc(parse_datetime_value(rid.value, rid.param("TZID")))
+        begin, finish, _ = component_window(component)
+        inside = original is not None and low <= original < high
+        if begin is not None and begin < high and (finish or begin) >= low:
+            inside = True
+        if not inside:
+            dropped.add(index)
+    if not dropped:
+        return data
+
+    # Rebuilt from raw lines minus the dropped blocks, everything else in order.
+    kept = [lines for i, (_, lines) in enumerate(blocks) if i not in dropped]
+    header, _ = _split_raw(data)
+    lines = ["BEGIN:VCALENDAR", *header, *(line for block in kept for line in block)]
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(fold(line) for line in lines) + "\r\n"
 
 
 # --------------------------------------------------------------- génération

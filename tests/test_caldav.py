@@ -349,6 +349,105 @@ class ReportTests(ServerTestCase):
         self.assertStatus(self.client.report(PERSO, body), 501)
 
 
+SERIE = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//tests//FR\r\n"
+    "BEGIN:VTIMEZONE\r\nTZID:Europe/Paris\r\nBEGIN:DAYLIGHT\r\nTZOFFSETFROM:+0100\r\n"
+    "TZOFFSETTO:+0200\r\nDTSTART:19700329T020000\r\nRRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3\r\n"
+    "END:DAYLIGHT\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\n"
+    "DTSTART:19701025T030000\r\nRRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10\r\n"
+    "END:STANDARD\r\nEND:VTIMEZONE\r\n"
+    "BEGIN:VEVENT\r\nUID:serie\r\nDTSTAMP:20260101T000000Z\r\n"
+    "DTSTART;TZID=Europe/Paris:20260105T100000\r\nDTEND;TZID=Europe/Paris:20260105T110000\r\n"
+    "RRULE:FREQ=WEEKLY;BYDAY=MO\r\nEXDATE;TZID=Europe/Paris:20260112T100000\r\n"
+    "SUMMARY:Point hebdo\r\nX-CLIENT-PROP:garde-moi\r\n"
+    "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT10M\r\nEND:VALARM\r\nEND:VEVENT\r\n"
+    "BEGIN:VEVENT\r\nUID:serie\r\nDTSTAMP:20260101T000000Z\r\n"
+    "RECURRENCE-ID;TZID=Europe/Paris:20260119T100000\r\n"
+    "DTSTART;TZID=Europe/Paris:20260119T140000\r\nDTEND;TZID=Europe/Paris:20260119T150000\r\n"
+    "SUMMARY:Point hebdo (décalé)\r\nEND:VEVENT\r\n"
+    "BEGIN:VEVENT\r\nUID:serie\r\nDTSTAMP:20260101T000000Z\r\n"
+    "RECURRENCE-ID;TZID=Europe/Paris:20260608T100000\r\n"
+    "DTSTART;TZID=Europe/Paris:20260608T160000\r\nDTEND;TZID=Europe/Paris:20260608T170000\r\n"
+    "SUMMARY:Point hebdo (juin)\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+class CalendarDataOptionsTests(ServerTestCase):
+    """`<C:expand>` and `<C:limit-recurrence-set>` (RFC 4791 §9.6.5 and §9.6.6)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.assertStatus(self.client.put(f"{PERSO}serie.ics", SERIE.encode("utf-8")), 201)
+
+    def donnees(self, option: str, rapport: str = "query") -> str:
+        prop = f"<D:prop><C:calendar-data>{option}</C:calendar-data></D:prop>"
+        if rapport == "query":
+            body = f"""<?xml version="1.0"?>
+            <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{prop}
+              <C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">
+                <C:time-range start="20260101T000000Z" end="20260201T000000Z"/>
+              </C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"""
+        else:
+            body = f"""<?xml version="1.0"?>
+            <C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{prop}
+              <D:href>{PERSO}serie.ics</D:href></C:calendar-multiget>"""
+        result = self.client.report(PERSO, body)
+        self.assertStatus(result, 207)
+        return next(parse(result).iter(caldav("calendar-data"))).text.replace("\r\n ", "")
+
+    def test_expand_une_instance_par_occurrence(self):
+        texte = self.donnees('<C:expand start="20260101T000000Z" end="20260201T000000Z"/>')
+        # Mondays of January 2026: the 5th, the 12th (excluded), the 19th
+        # (moved to 14:00) and the 26th.
+        self.assertEqual(texte.count("BEGIN:VEVENT"), 3)
+        for attendu in (
+            "DTSTART:20260105T090000Z",
+            "RECURRENCE-ID:20260105T090000Z",
+            "DTSTART:20260119T130000Z",
+            "RECURRENCE-ID:20260119T090000Z",
+            "DTSTART:20260126T090000Z",
+            "DTEND:20260126T100000Z",
+        ):
+            self.assertIn(attendu, texte)
+        for absent in ("RRULE", "EXDATE", "VTIMEZONE", "TZID=", "20260112T", "(juin)"):
+            self.assertNotIn(absent, texte)
+
+    def test_expand_conserve_le_reste_du_composant(self):
+        texte = self.donnees('<C:expand start="20260101T000000Z" end="20260201T000000Z"/>')
+        self.assertEqual(texte.count("X-CLIENT-PROP:garde-moi"), 2)
+        self.assertEqual(texte.count("BEGIN:VALARM"), texte.count("END:VALARM"))
+        self.assertIn("SUMMARY:Point hebdo (décalé)", texte)
+
+    def test_expand_en_multiget(self):
+        texte = self.donnees(
+            '<C:expand start="20260601T000000Z" end="20260615T000000Z"/>', rapport="multiget"
+        )
+        # Summer time: 10:00 in Paris is 08:00 UTC, and the June 8th override
+        # replaces its occurrence instead of doubling it.
+        self.assertIn("DTSTART:20260601T080000Z", texte)
+        self.assertIn("DTSTART:20260608T140000Z", texte)
+        self.assertIn("RECURRENCE-ID:20260608T080000Z", texte)
+        self.assertEqual(texte.count("BEGIN:VEVENT"), 2)
+        self.assertIn("SUMMARY:Point hebdo (juin)", texte)
+
+    def test_lobjet_stocke_nest_pas_modifie(self):
+        self.donnees('<C:expand start="20260101T000000Z" end="20260201T000000Z"/>')
+        self.assertEqual(self.client.request("GET", f"{PERSO}serie.ics").text, SERIE)
+
+    def test_limit_recurrence_set_ecarte_les_exceptions_hors_plage(self):
+        texte = self.donnees(
+            '<C:limit-recurrence-set start="20260101T000000Z" end="20260201T000000Z"/>'
+        )
+        self.assertIn("RRULE:FREQ=WEEKLY;BYDAY=MO", texte)
+        self.assertIn("(décalé)", texte)
+        self.assertNotIn("(juin)", texte)
+        self.assertIn("BEGIN:VTIMEZONE", texte)
+
+    def test_sans_option_lobjet_part_tel_quel(self):
+        # XML parsing turns CRLF into LF; the content is otherwise identical.
+        self.assertEqual(self.donnees(""), SERIE.replace("\r\n", "\n"))
+
+
 class SyncTests(ServerTestCase):
     SYNC = """<?xml version="1.0"?>
     <D:sync-collection xmlns:D="DAV:">

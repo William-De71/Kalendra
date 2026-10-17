@@ -239,6 +239,39 @@ class YearlyByWeekAndDayTests(unittest.TestCase):
         self.assertTrue(overlaps_range(data, ts("20270410T000000Z"), ts("20270411T000000Z")))
 
 
+HEBDO_PARIS = (
+    "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:p\r\n"
+    "DTSTART;TZID=Europe/Paris:20260105T100000\r\nDTEND;TZID=Europe/Paris:20260105T110000\r\n"
+    "RRULE:FREQ=WEEKLY;BYDAY=MO\r\nEXDATE;TZID=Europe/Paris:20260615T100000\r\n"
+    "SUMMARY:Point\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+class DaylightSavingTests(unittest.TestCase):
+    """A rule recurs in DTSTART's zone, not in UTC (RFC 5545 §3.3.10)."""
+
+    def test_lheure_locale_est_conservee_en_ete(self):
+        from kalendra.ics import expand_occurrences
+
+        found = expand_occurrences(HEBDO_PARIS, ts("20260608T000000Z"), ts("20260609T000000Z"))
+        self.assertEqual([o.start for o in found], [ts("20260608T080000Z")])
+        found = expand_occurrences(HEBDO_PARIS, ts("20260112T000000Z"), ts("20260113T000000Z"))
+        self.assertEqual([o.start for o in found], [ts("20260112T090000Z")])
+
+    def test_exdate_dete_respecte(self):
+        self.assertFalse(
+            overlaps_range(HEBDO_PARIS, ts("20260615T000000Z"), ts("20260616T000000Z"))
+        )
+        self.assertTrue(
+            overlaps_range(HEBDO_PARIS, ts("20260622T080000Z"), ts("20260622T081000Z"))
+        )
+
+    def test_borne_finale_en_heure_locale(self):
+        data = HEBDO_PARIS.replace("BYDAY=MO", "BYDAY=MO;COUNT=30")
+        # 30 Mondays from January 5th: July 27th, 10:00-11:00 Paris = 09:00Z.
+        self.assertEqual(parse_object(data).end, ts("20260727T090000Z"))
+
+
 class InvalidDateTests(unittest.TestCase):
     """RFC 5545 §3.3.10: a date that does not exist is skipped, never moved."""
 
