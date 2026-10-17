@@ -297,10 +297,13 @@ Une connexion par thread, WAL activé.
 - **`LOCK` / `UNLOCK`** : les ETags suffisent, aucun client courant ne l'exige.
 - **`MOVE` / `COPY`** : les clients ré-écrivent l'objet.
 - **Partage d'agenda entre utilisateurs.**
-- **`BYYEARDAY` et `BYWEEKNO`** dans `rrule.py` : non expansés. Ces objets sont
-  alors considérés comme candidats à toute plage, donc renvoyés au client qui
-  filtrera. Principe général : **en cas de doute, on montre l'événement plutôt
-  que de le masquer** — un événement en trop se voit, un événement perdu non.
+- **`BYDAY` ordinal combiné à `BYWEEKNO` ou `BYYEARDAY`** dans `rrule.py`
+  (`BYWEEKNO` et `BYYEARDAY` eux-mêmes sont expansés depuis la 1.2, et vérifiés
+  contre `python-dateutil`). Une règle non gérée lève `UnsupportedRule` ;
+  l'objet est alors considéré comme candidat à toute plage, donc renvoyé au
+  client qui filtrera. Principe général : **en cas de doute, on montre
+  l'événement plutôt que de le masquer** — un événement en trop se voit, un
+  événement perdu non.
 
 ---
 
