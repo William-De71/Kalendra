@@ -43,6 +43,8 @@ class Request:
     #: Peer address as the transport saw it; behind a reverse proxy, that is
     #: the proxy. `client_ip()` in app.py decides whether to look further.
     remote_addr: str = ""
+    #: Authenticated with an app password rather than the account password.
+    via_app_password: bool = False
 
     def header(self, name: str, default: str = "") -> str:
         return self.headers.get(name.lower(), default)

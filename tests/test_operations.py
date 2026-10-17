@@ -170,5 +170,78 @@ class AccessLogTests(ServerTestCase):
             self.client.request("OPTIONS", "/")
 
 
+class AppPasswordTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.app_id, self.secret = self.db.create_app_password(self.will_id, "téléphone")
+        self.phone = Client(self.app, "will", self.secret)
+
+    def test_ouvre_caldav(self):
+        self.assertStatus(self.phone.propfind(PERSO, "", depth="0"), 207)
+        self.assertIsNotNone(self.db.get_app_password(self.app_id)["last_used_at"])
+
+    def test_seule_lempreinte_est_stockee(self):
+        rows = self.db.conn.execute("SELECT token_hash FROM app_passwords").fetchall()
+        self.assertNotIn(self.secret, [r[0] for r in rows])
+
+    def test_ne_donne_pas_acces_a_linterface_web(self):
+        self.assertStatus(self.phone.request("GET", "/view/"), 401)
+        self.assertStatus(self.phone.request("GET", "/admin"), 401)
+        # The account password still does.
+        self.assertStatus(self.client.request("GET", "/view/"), 200)
+
+    def test_revocation_immediate_malgre_le_cache(self):
+        self.assertStatus(self.phone.propfind(PERSO, "", depth="0"), 207)
+        self.assertTrue(self.db.delete_app_password(self.will_id, self.app_id))
+        self.assertStatus(self.phone.propfind(PERSO, "", depth="0"), 401)
+
+    def test_lie_a_son_compte(self):
+        self.assertStatus(Client(self.app, "alice", self.secret).propfind("/", "", "0"), 401)
+        # Revoking through another account's id does nothing.
+        self.assertFalse(self.db.delete_app_password(self.alice_id, self.app_id))
+
+    def test_le_mot_de_passe_du_compte_reste_valable(self):
+        self.assertStatus(self.client.propfind(PERSO, "", depth="0"), 207)
+
+    def test_libelle_obligatoire(self):
+        with self.assertRaises(ValueError):
+            self.db.create_app_password(self.will_id, "  ")
+
+    def test_migration_dune_base_v3(self):
+        chemin = os.path.join(self.tmp, "ancienne.db")
+        conn = sqlite3.connect(chemin)
+        conn.executescript(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,"
+            " password_hash TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '',"
+            " email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0,"
+            " created_at TEXT NOT NULL); PRAGMA user_version = 3;"
+        )
+        conn.close()
+        from kalendra.db import SCHEMA_VERSION, connect, init_db
+
+        conn = connect(chemin)
+        try:
+            init_db(conn)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+            conn.execute("SELECT * FROM app_passwords").fetchall()
+        finally:
+            conn.close()
+
+    def test_cli(self):
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            main(["--db", self.config.db_path, "app-password", "add", "alice", "tablette"])
+        secret = buffer.getvalue().splitlines()[1]
+        self.assertStatus(Client(self.app, "alice", secret).propfind("/", "", "0"), 207)
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            main(["--db", self.config.db_path, "app-password", "list", "alice"])
+        self.assertIn("tablette", buffer.getvalue())
+        app_id = buffer.getvalue().split()[0]
+        with redirect_stdout(io.StringIO()):
+            main(["--db", self.config.db_path, "app-password", "rm", "alice", app_id])
+        self.assertEqual(self.db.list_app_passwords(self.alice_id), [])
+
+
 if __name__ == "__main__":
     unittest.main()

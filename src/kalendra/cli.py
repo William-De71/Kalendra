@@ -135,6 +135,41 @@ def cmd_user_rm(args) -> int:
     return 0
 
 
+def _user_or_exit(db, username: str):
+    user = db.get_user(username)
+    if user is None:
+        raise SystemExit(f"Utilisateur inconnu : {username}")
+    return user
+
+
+def cmd_apppw_add(args) -> int:
+    db = _database(args)
+    user = _user_or_exit(db, args.username)
+    app_id, secret = db.create_app_password(user["id"], args.label)
+    print(f"Mot de passe d'application n°{app_id} pour « {args.label} » :")
+    print(secret)
+    print("Il ne sera plus jamais affiché : saisissez-le maintenant dans le client.")
+    return 0
+
+
+def cmd_apppw_list(args) -> int:
+    db = _database(args)
+    user = _user_or_exit(db, args.username)
+    for row in db.list_app_passwords(user["id"]):
+        used = row["last_used_at"] or "jamais utilisé"
+        print(f"{row['id']:>3}  {row['label']:<30} créé {row['created_at']}  {used}")
+    return 0
+
+
+def cmd_apppw_rm(args) -> int:
+    db = _database(args)
+    user = _user_or_exit(db, args.username)
+    if not db.delete_app_password(user["id"], args.id):
+        raise SystemExit(f"Aucun mot de passe d'application n°{args.id} pour {args.username}")
+    print("Mot de passe d'application révoqué.")
+    return 0
+
+
 def cmd_calendar_add(args) -> int:
     db = _database(args)
     user = db.get_user(args.username)
@@ -281,6 +316,21 @@ def build_parser() -> argparse.ArgumentParser:
     remove = user.add_parser("rm")
     remove.add_argument("username")
     remove.set_defaults(func=cmd_user_rm)
+
+    apppw = sub.add_parser(
+        "app-password", help="mots de passe d'application (un par appareil)"
+    ).add_subparsers(dest="apppw_command", required=True)
+    ap_add = apppw.add_parser("add", help="crée et affiche un mot de passe")
+    ap_add.add_argument("username")
+    ap_add.add_argument("label", help="l'appareil qui l'utilisera (« téléphone »)")
+    ap_add.set_defaults(func=cmd_apppw_add)
+    ap_list = apppw.add_parser("list")
+    ap_list.add_argument("username")
+    ap_list.set_defaults(func=cmd_apppw_list)
+    ap_rm = apppw.add_parser("rm", help="révoque un mot de passe")
+    ap_rm.add_argument("username")
+    ap_rm.add_argument("id", type=int)
+    ap_rm.set_defaults(func=cmd_apppw_rm)
 
     calendar = sub.add_parser("calendar", help="gestion des agendas").add_subparsers(
         dest="calendar_command", required=True

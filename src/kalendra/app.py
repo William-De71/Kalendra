@@ -49,14 +49,15 @@ class _AuthCache:
     def __init__(self, ttl: int, capacity: int = 512) -> None:
         self.ttl = ttl
         self.capacity = capacity
-        self._entries: dict[str, tuple[float, int]] = {}
+        self._entries: dict[str, tuple[float, int, int | None]] = {}
         self._lock = threading.Lock()
 
     def _key(self, secret: str, username: str, password: str) -> str:
         payload = f"{username}\0{password}".encode()
         return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
-    def get(self, secret: str, username: str, password: str) -> int | None:
+    def get(self, secret: str, username: str, password: str) -> tuple[int, int | None] | None:
+        """Return (user id, app password id or None) for fresh credentials."""
         if self.ttl <= 0:
             return None
         key = self._key(secret, username, password)
@@ -65,20 +66,22 @@ class _AuthCache:
             entry = self._entries.get(key)
             if entry is None:
                 return None
-            expires, user_id = entry
+            expires, user_id, app_id = entry
             if expires < now:
                 self._entries.pop(key, None)
                 return None
-            return user_id
+            return user_id, app_id
 
-    def store(self, secret: str, username: str, password: str, user_id: int) -> None:
+    def store(
+        self, secret: str, username: str, password: str, user_id: int, app_id: int | None = None
+    ) -> None:
         if self.ttl <= 0:
             return
         key = self._key(secret, username, password)
         with self._lock:
             if len(self._entries) >= self.capacity:
                 self._entries.clear()
-            self._entries[key] = (time.monotonic() + self.ttl, user_id)
+            self._entries[key] = (time.monotonic() + self.ttl, user_id, app_id)
 
     def clear(self) -> None:
         with self._lock:
@@ -286,6 +289,14 @@ class Kalendra:
             return self._challenge()
         request.user = user
 
+        # An app password is meant for one CalDAV/CardDAV client: should it
+        # leak from a phone, it must not open the web pages that manage the
+        # account — app passwords and calendar deletion included.
+        if request.via_app_password and segments and segments[0] in {"view", "admin"}:
+            return error(
+                401, "Un mot de passe d'application ne donne pas accès à l'interface web."
+            ).header("WWW-Authenticate", REALM)
+
         if segments and segments[0] == "view":
             if not self.config.admin_ui:
                 return error(404, "Interface web désactivée.")
@@ -327,8 +338,13 @@ class Kalendra:
             # Checked before the lockout: a cache hit proves the password was
             # right a moment ago, so a family member behind the same address as
             # an attacker keeps working.
-            user = self.db.get_user_by_id(cached)
-            if user is not None and user["username"] == username:
+            user_id, app_id = cached
+            user = self.db.get_user_by_id(user_id)
+            # A revoked app password must stop working now, not when the cache
+            # entry expires: one indexed lookup is cheap next to PBKDF2.
+            revoked = app_id is not None and self.db.get_app_password(app_id) is None
+            if user is not None and user["username"] == username and not revoked:
+                request.via_app_password = app_id is not None
                 return user
 
         # Refused before PBKDF2, so a locked-out client no longer costs CPU.
@@ -340,6 +356,18 @@ class Kalendra:
             verify_password(password, DUMMY_HASH)
             self.throttle.failure(address)
             return None
+
+        # App passwords first: a SHA-256 lookup, where the account password
+        # costs a full PBKDF2 round. A device configured with one therefore
+        # authenticates faster, and never tries the account password.
+        app = self.db.find_app_password(int(user["id"]), password)
+        if app is not None:
+            self.throttle.success(address)
+            self.db.touch_app_password(int(app["id"]))
+            self.auth_cache.store(secret, username, password, int(user["id"]), int(app["id"]))
+            request.via_app_password = True
+            return user
+
         if not verify_password(password, user["password_hash"]):
             self.throttle.failure(address)
             return None

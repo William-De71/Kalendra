@@ -50,6 +50,11 @@ def new_token(nbytes: int = 24) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
+def app_password_digest(secret: str) -> str:
+    """Stored form of an app password: random enough that SHA-256 suffices."""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
 def csrf_token(secret: str, username: str) -> str:
     return hmac.new(secret.encode("utf-8"), username.encode("utf-8"), hashlib.sha256).hexdigest()
 
