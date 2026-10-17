@@ -70,6 +70,7 @@ class _Handler(BaseHTTPRequestHandler):
             query=query,
             headers={key.lower(): value for key, value in self.headers.items()},
             body=body,
+            remote_addr=self.client_address[0] if self.client_address else "",
         )
         return self.application.dispatch(request)
 
@@ -107,6 +108,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             logger.debug("client déconnecté pendant l'écriture de la réponse")
+
+    def log_request(self, code="-", size="-") -> None:
+        # Kalendra.dispatch writes its own access line, with the account and
+        # the duration; the stdlib one would only duplicate it, feed tokens
+        # included.
+        pass
 
     def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - bruit
         logger.info("%s %s", self.address_string(), fmt % args)

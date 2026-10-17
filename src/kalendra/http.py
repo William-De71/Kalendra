@@ -25,6 +25,7 @@ STATUS_TEXT = {
     413: "Payload Too Large",
     415: "Unsupported Media Type",
     422: "Unprocessable Entity",
+    429: "Too Many Requests",
     500: "Internal Server Error",
     501: "Not Implemented",
     507: "Insufficient Storage",
@@ -39,6 +40,9 @@ class Request:
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
     user: Any = None
+    #: Peer address as the transport saw it; behind a reverse proxy, that is
+    #: the proxy. `client_ip()` in app.py decides whether to look further.
+    remote_addr: str = ""
 
     def header(self, name: str, default: str = "") -> str:
         return self.headers.get(name.lower(), default)

@@ -66,6 +66,20 @@ class Config:
     #: How long (s) verified credentials stay cached; 0 disables it.
     auth_cache_ttl: int = field(default_factory=lambda: _int("KALENDRA_AUTH_CACHE_TTL", 60))
 
+    #: Failed logins tolerated from one address before it is refused (429);
+    #: 0 disables throttling.
+    auth_max_failures: int = field(default_factory=lambda: _int("KALENDRA_AUTH_MAX_FAILURES", 10))
+
+    #: Window over which failures are counted, and how long the lock lasts (s).
+    auth_lockout_seconds: int = field(default_factory=lambda: _int("KALENDRA_AUTH_LOCKOUT", 300))
+
+    #: Read the client address from X-Forwarded-For. Only behind a reverse
+    #: proxy that sets it: otherwise any client could pick its own address.
+    trust_proxy: bool = field(default_factory=lambda: _bool("KALENDRA_TRUST_PROXY", False))
+
+    #: One log line per request: method, path, status, duration, account.
+    access_log: bool = field(default_factory=lambda: _bool("KALENDRA_ACCESS_LOG", True))
+
     log_level: str = field(default_factory=lambda: os.environ.get("KALENDRA_LOG_LEVEL", "info"))
 
     #: Administrator account created on first start when the database is empty.

@@ -28,6 +28,7 @@ from .http import Request, Response, error, text_response
 from .security import csrf_token, verify_password
 
 logger = logging.getLogger("kalendra")
+access_logger = logging.getLogger("kalendra.access")
 
 REALM = 'Basic realm="Kalendra", charset="UTF-8"'
 
@@ -84,6 +85,104 @@ class _AuthCache:
             self._entries.clear()
 
 
+class _LoginThrottle:
+    """Refuse an address for a while after too many failed logins.
+
+    PBKDF2 already slows each guess to ~100 ms, which still allows close to a
+    million guesses a day from a single client. Counting failures per address
+    turns that into a handful per lockout window.
+
+    Keyed on the address alone, never on the account: locking an account
+    after N failures would let anyone lock out a user they know the name of.
+    Requests without credentials are not failures — every CalDAV client
+    starts with one to receive the 401 challenge.
+    """
+
+    def __init__(self, max_failures: int, window: int, capacity: int = 4096) -> None:
+        self.max_failures = max_failures
+        self.window = window
+        self.capacity = capacity
+        # address -> (failures, start of the counting window, locked until)
+        self._entries: dict[str, tuple[int, float, float]] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self.max_failures > 0 and self.window > 0
+
+    def retry_after(self, address: str) -> int:
+        """Seconds the address must still wait, 0 when it may try."""
+        if not self.enabled:
+            return 0
+        now = time.monotonic()
+        with self._lock:
+            entry = self._entries.get(address)
+            if entry is None or entry[2] <= now:
+                return 0
+            return max(1, int(entry[2] - now + 0.999))
+
+    def failure(self, address: str) -> None:
+        if not self.enabled:
+            return
+        now = time.monotonic()
+        with self._lock:
+            failures, started, locked = self._entries.get(address, (0, now, 0.0))
+            if now - started > self.window:
+                failures, started = 0, now
+            failures += 1
+            if failures >= self.max_failures:
+                locked = now + self.window
+            if len(self._entries) >= self.capacity and address not in self._entries:
+                self._purge(now)
+            self._entries[address] = (failures, started, locked)
+
+    def success(self, address: str) -> None:
+        with self._lock:
+            self._entries.pop(address, None)
+
+    def _purge(self, now: float) -> None:
+        stale = [
+            key
+            for key, (_, started, locked) in self._entries.items()
+            if locked <= now and now - started > self.window
+        ]
+        for key in stale:
+            del self._entries[key]
+        if len(self._entries) >= self.capacity:
+            # Flooded with distinct addresses: forgetting is better than
+            # growing without bound, and the PBKDF2 cost remains.
+            self._entries.clear()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+def client_ip(request: Request, trust_proxy: bool) -> str:
+    """Address to charge failed logins to.
+
+    Behind a reverse proxy every request comes from the proxy, which would make
+    one attacker lock out everybody; hence `KALENDRA_TRUST_PROXY`. The
+    rightmost X-Forwarded-For entry is the one our own proxy appended — the
+    ones to its left are whatever the client chose to send.
+    """
+    if trust_proxy:
+        forwarded = request.header("x-forwarded-for")
+        if forwarded:
+            last = forwarded.split(",")[-1].strip()
+            if last:
+                return last
+    return request.remote_addr
+
+
+def _loggable_path(path: str, base: str) -> str:
+    """The feed token is the feed's only secret: it must not reach the logs."""
+    relative = path[len(base) :] if base and path.startswith(base) else path
+    if relative.startswith("/feed/"):
+        return f"{base}/feed/…"
+    return path
+
+
 class Kalendra:
     """CalDAV application: DAV, public ICS feeds and the admin interface."""
 
@@ -92,6 +191,9 @@ class Kalendra:
         self.db = database or Database(self.config.db_path)
         self.db.setup()
         self.auth_cache = _AuthCache(self.config.auth_cache_ttl)
+        self.throttle = _LoginThrottle(
+            self.config.auth_max_failures, self.config.auth_lockout_seconds
+        )
         self._bootstrap()
 
     # ------------------------------------------------------------- démarrage
@@ -114,6 +216,38 @@ class Kalendra:
     # -------------------------------------------------------------- routage
 
     def dispatch(self, request: Request) -> Response:
+        """Route a request, then write its access-log line."""
+        started = time.perf_counter()
+        method, path = request.method, request.path
+        status = 500
+        try:
+            response = self._route(request)
+            status = response.status
+            return response
+        finally:
+            if self.config.access_log:
+                self._log_access(request, method, path, status, started)
+
+    def _log_access(
+        self, request: Request, method: str, path: str, status: int, started: float
+    ) -> None:
+        # key=value pairs: greppable as is, and parsed without configuration by
+        # Loki, Vector or `jq -R`. Health probes go to debug — one every 30 s
+        # would drown everything else.
+        user = request.user["username"] if request.user is not None else "-"
+        level = logging.DEBUG if path.endswith(("/health", "/healthz")) else logging.INFO
+        access_logger.log(
+            level,
+            "ip=%s method=%s path=%s status=%d ms=%.1f user=%s",
+            client_ip(request, self.config.trust_proxy) or "-",
+            method,
+            _loggable_path(path, self.config.base_path),
+            status,
+            (time.perf_counter() - started) * 1000,
+            user,
+        )
+
+    def _route(self, request: Request) -> Response:
         base = self.config.base_path
         path = request.path
         if base and path.startswith(base):
@@ -141,7 +275,13 @@ class Kalendra:
             token = segments[1] if len(segments) > 1 else ""
             return handle_feed(self.db, self.config, request, token)
 
-        user = self._authenticate(request)
+        address = client_ip(request, self.config.trust_proxy)
+        user = self._authenticate(request, address)
+        if user is _THROTTLED:
+            wait = self.throttle.retry_after(address)
+            return error(
+                429, "Trop d'échecs d'authentification : réessayez plus tard."
+            ).header("Retry-After", str(wait))
         if user is None:
             return self._challenge()
         request.user = user
@@ -169,7 +309,7 @@ class Kalendra:
 
     # -------------------------------------------------------- authentification
 
-    def _authenticate(self, request: Request):
+    def _authenticate(self, request: Request, address: str = ""):
         header = request.header("authorization")
         if not header.lower().startswith("basic "):
             return None
@@ -184,22 +324,37 @@ class Kalendra:
         secret = self.db.secret_key()
         cached = self.auth_cache.get(secret, username, password)
         if cached is not None:
+            # Checked before the lockout: a cache hit proves the password was
+            # right a moment ago, so a family member behind the same address as
+            # an attacker keeps working.
             user = self.db.get_user_by_id(cached)
             if user is not None and user["username"] == username:
                 return user
 
+        # Refused before PBKDF2, so a locked-out client no longer costs CPU.
+        if self.throttle.retry_after(address):
+            return _THROTTLED
+
         user = self.db.get_user(username)
         if user is None:
             verify_password(password, DUMMY_HASH)
+            self.throttle.failure(address)
             return None
         if not verify_password(password, user["password_hash"]):
+            self.throttle.failure(address)
             return None
+        self.throttle.success(address)
         self.auth_cache.store(secret, username, password, int(user["id"]))
         return user
 
     @staticmethod
     def _challenge() -> Response:
         return error(401, "Authentification requise.").header("WWW-Authenticate", REALM)
+
+
+#: Sentinel distinct from None ("no valid credentials"): the caller answers 429
+#: rather than 401, which would invite the client to try again at once.
+_THROTTLED = object()
 
 
 def _wants_html(request: Request) -> bool:
