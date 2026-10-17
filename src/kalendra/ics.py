@@ -604,12 +604,16 @@ def fold(line: str) -> str:
     if len(raw) <= 75:
         return line
     chunks: list[bytes] = []
-    while len(raw) > 75:
-        cut = 75
+    # The leading space of a continuation line counts towards its 75 octets:
+    # 74 bytes of content after the first line, or strict consumers balk.
+    limit = 75
+    while len(raw) > limit:
+        cut = limit
         while cut > 0 and (raw[cut] & 0xC0) == 0x80:
             cut -= 1
         chunks.append(raw[:cut])
         raw = raw[cut:]
+        limit = 74
     chunks.append(raw)
     return "\r\n ".join(chunk.decode("utf-8") for chunk in chunks)
 
@@ -638,10 +642,13 @@ def iter_top_level_blocks(text: str) -> list[tuple[str, list[str]]]:
                 current = [line]
                 continue
         elif upper.startswith("END:"):
-            if depth == 2 and current is not None:
+            if current is not None:
+                # Nested ends too (END:VALARM): dropping them would publish a
+                # BEGIN:VALARM never closed, and the whole feed rejected.
                 current.append(line)
-                blocks.append((name, current))
-                current = None
+                if depth == 2:
+                    blocks.append((name, current))
+                    current = None
             depth -= 1
             continue
         if current is not None:
