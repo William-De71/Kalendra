@@ -101,16 +101,20 @@ def _clients(racine: str, username: str) -> str:
             [
                 "Fichier → Nouveau → Agenda, type <b>CalDAV</b>.",
                 f"URL : <code>{escape(racine)}/</code>, utilisateur <code>{u}</code>.",
-                "« Rechercher des agendas » liste vos agendas ; même démarche avec "
-                "Fichier → Nouveau → Carnet d'adresses, type <b>CardDAV</b>.",
+                (
+                    "« Rechercher des agendas » liste vos agendas ; même démarche avec "
+                    "Fichier → Nouveau → Carnet d'adresses, type <b>CardDAV</b>."
+                ),
             ],
         ),
         (
             "Thunderbird",
             [
                 "Agenda → Nouvel agenda → Sur le réseau.",
-                f"Utilisateur <code>{u}</code>, adresse <code>{escape(racine)}/</code> : "
-                "Thunderbird découvre agendas et carnets d'adresses.",
+                (
+                    f"Utilisateur <code>{u}</code>, adresse <code>{escape(racine)}/</code> : "
+                    "Thunderbird découvre agendas et carnets d'adresses."
+                ),
             ],
         ),
         (
@@ -124,11 +128,15 @@ def _clients(racine: str, username: str) -> str:
         (
             "iPhone, iPad, Mac",
             [
-                "Le plus simple : installez le profil ci-dessous, il remplit tout sauf "
-                "le mot de passe.",
-                "À la main : Réglages → Calendrier → Comptes → Ajouter un compte → Autre "
-                f"→ Compte CalDAV, serveur <code>{escape(urlsplit(racine).netloc)}</code>, "
-                f"utilisateur <code>{u}</code>. Idem pour les contacts avec un compte CardDAV.",
+                (
+                    "Le plus simple : installez le profil ci-dessous, il remplit tout sauf "
+                    "le mot de passe."
+                ),
+                (
+                    "À la main : Réglages → Calendrier → Comptes → Ajouter un compte → Autre "
+                    f"→ Compte CalDAV, serveur <code>{escape(urlsplit(racine).netloc)}</code>, "
+                    f"utilisateur <code>{u}</code>. Idem pour les contacts avec un compte CardDAV."
+                ),
             ],
         ),
     )

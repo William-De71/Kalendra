@@ -70,7 +70,7 @@ GRAINES_VCF = [
 
 #: Fragments that tend to break hand-written parsers.
 EPICES = [
-    ":", ";", "=", ",", '"', "\\", "\r\n", "\n", "\r", " ", "\t", "\x00", "é", "☕", "﻿",
+    ":", ";", "=", ",", '"', "\\", "\r\n", "\n", "\r", " ", "\t", "\x00", "é", "☕", "\ufeff",
     "BEGIN:VEVENT", "END:VEVENT", "BEGIN:VALARM", "END:VCALENDAR", "BEGIN:VCARD", "END:VCARD",
     "TZID=", "TZID=Nowhere/Land", "TZID=\"/a/b/c\"", "VALUE=DATE", "Z", "T", "P", "-P1W",
     "RRULE:", "FREQ=", "COUNT=", "UNTIL=", "BYDAY=", "BYSETPOS=", "99999999T999999Z",
@@ -172,11 +172,9 @@ class ParserFuzzTests(unittest.TestCase):
                 debut = rng.choice(debuts)
                 # Same awareness as DTSTART, as `ics.recurrences` guarantees.
                 horizon = datetime(2030, 1, 1, tzinfo=debut.tzinfo)
-                try:
+                with contextlib.suppress(UnsupportedRule):
                     for _ in iter_occurrences(debut, parse_rrule(regle), limit=60, horizon=horizon):
                         pass
-                except UnsupportedRule:
-                    pass
 
 
 class ServerFuzzTests(ServerTestCase):
@@ -206,18 +204,24 @@ class ServerFuzzTests(ServerTestCase):
     def test_corps_xml(self):
         rng = random.Random(SEED + 6)
         graines = [
-            '<?xml version="1.0"?><C:calendar-query xmlns:D="DAV:" '
-            'xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/>'
-            '<C:calendar-data><C:expand start="20260101T000000Z" end="20260201T000000Z"/>'
-            '</C:calendar-data></D:prop><C:filter><C:comp-filter name="VCALENDAR">'
-            '<C:comp-filter name="VEVENT"><C:time-range start="20260101T000000Z"/>'
-            '<C:prop-filter name="SUMMARY"><C:text-match>a</C:text-match></C:prop-filter>'
-            "</C:comp-filter></C:comp-filter></C:filter></C:calendar-query>",
-            '<?xml version="1.0"?><D:sync-collection xmlns:D="DAV:"><D:sync-token>'
-            "urn:kalendra:sync:1:1</D:sync-token><D:prop><D:getetag/></D:prop>"
-            "</D:sync-collection>",
-            '<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/>'
-            "<D:quota-available-bytes/></D:prop></D:propfind>",
+            (
+                '<?xml version="1.0"?><C:calendar-query xmlns:D="DAV:" '
+                'xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/>'
+                '<C:calendar-data><C:expand start="20260101T000000Z" end="20260201T000000Z"/>'
+                '</C:calendar-data></D:prop><C:filter><C:comp-filter name="VCALENDAR">'
+                '<C:comp-filter name="VEVENT"><C:time-range start="20260101T000000Z"/>'
+                '<C:prop-filter name="SUMMARY"><C:text-match>a</C:text-match></C:prop-filter>'
+                "</C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"
+            ),
+            (
+                '<?xml version="1.0"?><D:sync-collection xmlns:D="DAV:"><D:sync-token>'
+                "urn:kalendra:sync:1:1</D:sync-token><D:prop><D:getetag/></D:prop>"
+                "</D:sync-collection>"
+            ),
+            (
+                '<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/>'
+                "<D:quota-available-bytes/></D:prop></D:propfind>"
+            ),
         ]
         self.client.put("/calendars/will/perso/s.ics", SERIE.encode("utf-8"))
         for tour in range(ROUNDS // 2):
