@@ -92,10 +92,11 @@ réseau interne, métadonnées cloud) et introduirait une dépendance réseau da
 un serveur qui n'en a aucune. L'utilisateur télécharge le fichier lui-même,
 puis le dépose.
 
-Ce sont les **seules routes en écriture de `/view/`** — import, création et
-suppression d'agenda — d'où le jeton anti-CSRF sur chacune : le navigateur
-rejoue automatiquement les identifiants Basic. Tout le reste de la vue refuse
-les méthodes autres que `GET`/`HEAD`.
+Les **routes en écriture de `/view/`** sont en nombre fermé — import d'un
+`.ics` ou d'un `.vcf`, création et suppression d'agenda, création et
+révocation de mots de passe d'application sur `/view/compte/` — d'où le jeton
+anti-CSRF sur chacune : le navigateur rejoue automatiquement les identifiants
+Basic. Tout le reste de la vue refuse les méthodes autres que `GET`/`HEAD`.
 
 Chaque compte gère ses propres agendas sans être administrateur ; seul un
 `is_admin` peut viser un autre compte. Créer un agenda et y verser un fichier
@@ -109,6 +110,26 @@ l'entête et les `VTIMEZONE` dans chaque objet. Le nom de ressource dérive de
 l'UID, si bien qu'un réimport met à jour au lieu de dupliquer. Un composant
 illisible est ignoré et signalé, sans faire échouer les autres — importer 67
 événements sur 68 vaut mieux que rien.
+
+`importvcf.py` fait de même pour les carnets : découpe sur `BEGIN/END:VCARD`
+en lignes physiques (le pliage est conservé), nom dérivé de l'UID, ou d'une
+empreinte du contenu quand la carte n'en a pas — un réimport du même fichier
+reste idempotent. L'export (`export.py`, `?export=ics|vcf`) est le chemin
+inverse, objets recopiés tels quels.
+
+### Mots de passe d'application
+
+Une table `app_passwords` (schéma v4) porte un identifiant par appareil. Seule
+l'empreinte SHA-256 est stockée : le secret fait 32 octets aléatoires, un hash
+lent n'ajouterait rien, et un hash rapide permet de le retrouver par index —
+il est donc essayé **avant** PBKDF2. Deux règles à ne pas défaire :
+
+- un mot de passe d'application **n'ouvre jamais `/view/` ni `/admin`** :
+  fuité d'un téléphone, il ne doit pas pouvoir gérer le compte ni créer
+  d'autres mots de passe ;
+- une révocation vaut **immédiatement**, cache d'identifiants compris :
+  `_AuthCache` mémorise l'identifiant du mot de passe et `_authenticate`
+  vérifie qu'il existe encore à chaque passage par le cache.
 
 ### Google et Proton ne font pas de CalDAV
 
@@ -142,11 +163,15 @@ choix de conception, pas un oubli.
 | `db.py` | Schéma SQLite, transactions, révisions de synchronisation |
 | `ics.py` | Analyseur et générateur iCalendar |
 | `importics.py` | Import d'un `.ics` agrégé, un objet par composant |
+| `importvcf.py` | Import d'un `.vcf` agrégé, un objet par carte |
+| `export.py` | Export d'un agenda (`.ics`) ou d'un carnet (`.vcf`) |
 | `vcard.py` | Analyseur vCard (CardDAV) |
 | `rrule.py` | Expansion des récurrences |
 | `feed.py` | Flux ICS publics |
 | `admin.py` | Interface web d'administration |
-| `calendarview.py` | Vue mensuelle et vue contacts, en lecture seule |
+| `calendarview.py` | Vues mois, semaine, liste et contacts, en lecture seule |
+| `account.py` | Page « Mon compte » : clients, profil Apple, mots de passe d'application |
+| `webui.py` | Barre latérale et styles communs aux deux interfaces |
 | `cli.py` | Ligne de commande |
 | `http.py` | `Request` / `Response`, sans framework |
 | `xmlutil.py` | Espaces de noms DAV, sérialisation, analyse XML sûre |
@@ -169,12 +194,19 @@ choix de conception, pas un oubli.
 /feed/<jeton>.ics                     flux public, sans authentification
 /view/                                liste des agendas consultables
 /view/<user>/<agenda>/?m=AAAA-MM      vue mensuelle, lecture seule
+/view/<user>/<agenda>/?vue=semaine&d=AAAA-MM-JJ   vue semaine
+/view/<user>/<agenda>/?vue=liste&m=AAAA-MM        vue liste
+/view/<user>/<agenda>/?export=ics     téléchargement de l'agenda entier
 /view/<user>/<agenda>/<x>.ics         détail d'un objet
 /view/<user>/<agenda>/import          POST, dépôt d'un .ics (CSRF)
 /view/agendas/creer                   POST, création (+ import) d'un agenda
 /view/<user>/<agenda>/supprimer       POST, suppression d'un agenda
 /view/contacts/<user>/<carnet>/       liste des contacts, lecture seule
 /view/contacts/<user>/<carnet>/<x>.vcf  fiche d'un contact
+/view/contacts/<user>/<carnet>/?export=vcf  téléchargement du carnet
+/view/contacts/<user>/<carnet>/import  POST, dépôt d'un .vcf (CSRF)
+/view/compte/                         « Mon compte » ; POST : mots de passe (CSRF)
+/view/compte/?profil=apple            profil .mobileconfig
 /admin…                               interface d'administration (is_admin)
 /health                               sonde, sans authentification
 ```
@@ -183,8 +215,11 @@ choix de conception, pas un oubli.
 carnets (un administrateur voit tout) ; `/admin` exige `is_admin`. Le préfixe
 `/view/contacts/` n'est emprunté que si le segment suivant désigne un compte
 existant — sans quoi un utilisateur nommé « contacts » perdrait l'accès à ses
-propres agendas. Les deux sont
-coupées ensemble par `KALENDRA_ADMIN_UI=false`.
+propres agendas. `/view/compte/` tient en un seul segment, ce qu'aucun
+agenda n'a jamais désigné (il en faut deux) : il ne masque donc rien. Les
+modes et l'export passent par la chaîne de requête plutôt que par un segment,
+pour la même raison — `export.ics` pourrait être le nom d'un objet. Les deux
+interfaces sont coupées ensemble par `KALENDRA_ADMIN_UI=false`.
 
 ### Fuseaux dans la vue mensuelle
 
@@ -193,6 +228,13 @@ Les instants sont convertis vers le fuseau local du serveur (variable `TZ`),
 convertir les ferait basculer la veille dans tout fuseau à l'ouest de
 Greenwich. `remplir()` traite donc ces deux cas séparément — c'est
 intentionnel, et couvert par `FuseauTests`.
+
+Les **récurrences**, elles, se développent dans le fuseau de leur `DTSTART`
+(`ics.local_start` / `ics.recurrences`), chaque occurrence n'étant convertie
+en UTC qu'ensuite : « tous les lundis à 10 h Europe/Paris » vaut 9 h UTC
+l'hiver et 8 h UTC l'été. Développer l'instant UTC décalerait toutes les
+occurrences d'été d'une heure, et les `EXDATE` / `RECURRENCE-ID` d'été ne
+correspondraient plus. Couvert par `DaylightSavingTests`.
 
 La suite doit passer sous plusieurs fuseaux ; le vérifier avant de toucher à
 l'affichage des dates :
@@ -256,6 +298,15 @@ convertir en test `dispatch()`.
 
 `tests/integration/` n'est lancé qu'en intégration continue, contre un
 conteneur démarré, avec la vraie bibliothèque cliente `caldav`.
+`test_feed_consumer.py` y relit les flux publics avec `icalendar` (apporté par
+`caldav`) : un parseur que nous n'avons pas écrit, comme celui de Google.
+
+`tests/test_fuzz.py` mute des objets réalistes avec un `random.Random` à
+graine fixe et exige qu'aucun point d'entrée ne lève autre chose que son
+exception documentée, ni ne réponde 500. Il a trouvé les plantages sur
+`BYMONTH=13`, l'an 10000 et les `DURATION` démesurées : `rrule.RANGES` et
+`ics.shift` en sont les garde-fous. `KALENDRA_FUZZ_SEED` et
+`KALENDRA_FUZZ_ROUNDS` élargissent la recherche en local.
 
 `scripts/verify-deployment.sh` vérifie un déploiement réel avec `curl` :
 il attrape ce que les tests unitaires ne peuvent pas voir — `PYTHONPATH`
@@ -276,6 +327,14 @@ verbes WebDAV.
   le navigateur rejoue automatiquement les identifiants Basic, donc l'absence
   de jeton serait exploitable.
 - Les noms de ressources déposées sont validés par `SAFE_HREF` (`dav.py`).
+- Freinage des connexions (`_LoginThrottle`) : compté **par adresse, jamais
+  par compte** — sinon n'importe qui bloquerait un utilisateur dont il connaît
+  le nom. Une requête sans identifiants n'est pas un échec (tout client CalDAV
+  commence par là pour recevoir le 401), et un succès en cache passe malgré
+  le blocage. Derrière un proxy, `KALENDRA_TRUST_PROXY` fait lire l'entrée la
+  plus à droite de `X-Forwarded-For` : c'est la seule qu'ajoute notre proxy.
+- Le journal d'accès ne contient **jamais** un jeton de flux : le chemin
+  `/feed/<jeton>` y devient `/feed/…`.
 
 ### Base de données
 
@@ -283,7 +342,13 @@ Toute écriture passe par `transaction()` (`BEGIN IMMEDIATE`) pour éviter les
 conflits d'écriture concurrents. Exception : `init_db()` — `executescript()`
 valide implicitement la transaction en cours et échouerait à l'intérieur.
 
-Une connexion par thread, WAL activé.
+Une connexion par thread, WAL activé. C'est pourquoi une sauvegarde ne se fait
+pas par `cp` : `Database.backup()` passe par l'API de sauvegarde de SQLite (ou
+`VACUUM INTO`) et rend un fichier autonome, sans `-wal`.
+
+Le quota (`KALENDRA_QUOTA_BYTES`) est celui du **propriétaire** de la
+collection, pas de qui écrit : un administrateur qui remplit l'agenda d'un
+autre consomme l'espace de cet autre.
 
 ---
 

@@ -10,7 +10,7 @@ The seed is fixed so a failure reproduces; KALENDRA_FUZZ_SEED and
 KALENDRA_FUZZ_ROUNDS widen the search locally:
 
     KALENDRA_FUZZ_ROUNDS=20000 KALENDRA_FUZZ_SEED=7 \\
-        python -m unittest tests.test_fuzz
+        python -m unittest discover -s tests -t tests -p test_fuzz.py
 """
 
 from __future__ import annotations
