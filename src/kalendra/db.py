@@ -226,6 +226,44 @@ class Database:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'secret_key'").fetchone()
         return row["value"] if row else "kalendra"
 
+    def backup(self, destination: str, *, compact: bool = False) -> int:
+        """Write a consistent copy of the live database to `destination`.
+
+        Copying `kalendra.db` with `cp` while the server runs is unsafe in WAL
+        mode: recent commits still sit in `kalendra.db-wal`, and a copy taken
+        between a write and a checkpoint can come out torn. SQLite's online
+        backup API, or `VACUUM INTO`, reads one snapshot and produces a
+        self-contained file — the WAL folded in — without stopping writers.
+
+        `compact` uses `VACUUM INTO`, which also drops free pages: smaller, but
+        it rebuilds every index, so it costs more on a large database.
+        Returns the size of the copy in bytes.
+        """
+        destination = os.path.abspath(destination)
+        if os.path.exists(destination):
+            raise FileExistsError(destination)
+        directory = os.path.dirname(destination)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        if compact:
+            self.conn.execute("VACUUM INTO ?", (destination,))
+        else:
+            target = sqlite3.connect(destination)
+            try:
+                self.conn.backup(target)
+            finally:
+                target.close()
+        # The copy must not depend on a -wal file that would not travel with it.
+        check = sqlite3.connect(destination)
+        try:
+            check.execute("PRAGMA journal_mode = DELETE")
+            ok = check.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            check.close()
+        if ok != "ok":
+            raise sqlite3.DatabaseError(f"copie corrompue : {ok}")
+        return os.path.getsize(destination)
+
     # ------------------------------------------------------------ utilisateurs
 
     def create_user(

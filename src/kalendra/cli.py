@@ -1,11 +1,13 @@
-"""Command-line interface: `kalendra serve`, `user`, `calendar`."""
+"""Command-line interface: `kalendra serve`, `user`, `calendar`, `backup`."""
 
 from __future__ import annotations
 
 import argparse
 import getpass
 import logging
+import os
 import sys
+from datetime import datetime
 
 from . import __version__
 from .config import Config
@@ -65,6 +67,22 @@ def cmd_serve(args) -> int:
 def cmd_init(args) -> int:
     db = _database(args)
     print(f"Base initialisée : {db.path}")
+    return 0
+
+
+def cmd_backup(args) -> int:
+    db = _database(args)
+    destination = args.destination
+    if os.path.isdir(destination):
+        # A directory means "put it in there": a timestamped name lets a cron
+        # job write into the same folder every night without clobbering.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        destination = os.path.join(destination, f"kalendra-{stamp}.db")
+    try:
+        size = db.backup(destination, compact=args.compact)
+    except FileExistsError:
+        raise SystemExit(f"Le fichier existe déjà : {destination}") from None
+    print(f"Sauvegarde écrite : {destination} ({size} octets)")
     return 0
 
 
@@ -230,6 +248,15 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=cmd_serve)
 
     sub.add_parser("init-db", help="crée le schéma SQLite").set_defaults(func=cmd_init)
+
+    backup = sub.add_parser(
+        "backup", help="copie cohérente de la base, serveur en marche"
+    )
+    backup.add_argument("destination", help="fichier à créer, ou dossier où le créer")
+    backup.add_argument(
+        "--compact", action="store_true", help="VACUUM INTO : copie plus petite, plus lente"
+    )
+    backup.set_defaults(func=cmd_backup)
 
     user = sub.add_parser("user", help="gestion des comptes").add_subparsers(
         dest="user_command", required=True
