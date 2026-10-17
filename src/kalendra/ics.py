@@ -241,14 +241,31 @@ def parse_duration(raw: str) -> timedelta | None:
     if not match:
         return None
     groups = {k: int(v) for k, v in match.groupdict().items() if v and k != "sign"}
-    delta = timedelta(
-        weeks=groups.get("weeks", 0),
-        days=groups.get("days", 0),
-        hours=groups.get("hours", 0),
-        minutes=groups.get("minutes", 0),
-        seconds=groups.get("seconds", 0),
-    )
+    try:
+        delta = timedelta(
+            weeks=groups.get("weeks", 0),
+            days=groups.get("days", 0),
+            hours=groups.get("hours", 0),
+            minutes=groups.get("minutes", 0),
+            seconds=groups.get("seconds", 0),
+        )
+    except OverflowError:
+        # Beyond what timedelta holds: longer than anything a calendar shows.
+        return DATETIME_MAX - DATETIME_MIN
     return -delta if match.group("sign") == "-" else delta
+
+
+def shift(moment: datetime, delta: timedelta) -> datetime:
+    """`moment + delta`, saturating at the representable bounds.
+
+    Durations come from the client: P100000000D is syntactically valid, and
+    must widen an event to "forever" rather than raise in the middle of a
+    REPORT.
+    """
+    try:
+        return moment + delta
+    except OverflowError:
+        return DATETIME_MAX if delta > timedelta() else DATETIME_MIN
 
 
 def to_utc(value: datetime | date | None) -> datetime | None:
@@ -309,9 +326,9 @@ def component_window(component: Component) -> tuple[datetime | None, datetime | 
     if end is None and start is not None:
         duration = parse_duration(component.value("DURATION"))
         if duration is not None:
-            end = start + duration
+            end = shift(start, duration)
         else:
-            end = start + (timedelta(days=1) if all_day else timedelta())
+            end = shift(start, timedelta(days=1) if all_day else timedelta())
     if start is None and end is not None:
         start = end
     return start, end, all_day
@@ -432,14 +449,14 @@ def parse_object(data: str) -> ObjectMeta:
             if final is None:
                 unbounded = True
             else:
-                ends.append(final + duration)
+                ends.append(shift(final, duration))
         elif end is not None:
             ends.append(end)
 
         for extra in _extra_dates(component):
             recurring = True
             starts.append(extra)
-            ends.append(extra + duration)
+            ends.append(shift(extra, duration))
 
     return ObjectMeta(
         uid=next(iter(uids)),
@@ -473,7 +490,7 @@ def overlaps_range(data: str, start: int | None, end: int | None) -> bool:
         excluded = _exception_dates(component)
 
         for moment in _extra_dates(component):
-            if moment not in excluded and moment < high and moment + duration > low:
+            if moment not in excluded and moment < high and shift(moment, duration) > low:
                 return True
 
         rrule_prop = component.get("RRULE")
@@ -491,7 +508,7 @@ def overlaps_range(data: str, start: int | None, end: int | None) -> bool:
                 count += 1
                 if moment in excluded:
                     continue
-                if moment + duration > low:
+                if shift(moment, duration) > low:
                     return True
                 if count >= MAX_EXPANSION:
                     return True
@@ -587,7 +604,7 @@ def iter_instances(
                 begin = own_start
                 duration = (own_end - own_start) if own_end else timedelta()
         # RFC 4791 §9.9: a zero-length instance overlaps when it starts inside.
-        finish = begin + duration
+        finish = shift(begin, duration)
         if begin >= high or (finish <= low and not (duration == timedelta() and begin >= low)):
             return
         results.append(Instance(component, begin, duration, rid))
@@ -665,7 +682,7 @@ def expand_occurrences(
         results.append(
             Occurrence(
                 start=to_unix(instance.start),
-                end=to_unix(instance.start + instance.duration),
+                end=to_unix(shift(instance.start, instance.duration)),
                 all_day=component_window(instance.component)[2],
                 summary=summary_prop.text if summary_prop else "(sans titre)",
                 uid=instance.component.value("UID"),
@@ -711,7 +728,7 @@ def _instance_lines(raw: list[str], instance: Instance, all_day: bool) -> list[s
         for line in raw[1:-1]
     }
     lines = [raw[0], _stamp(instance.start, all_day, "DTSTART")]
-    finish = instance.start + instance.duration
+    finish = shift(instance.start, instance.duration)
     if "DTEND" in own:
         lines.append(_stamp(finish, all_day, "DTEND"))
     elif "DUE" in own:

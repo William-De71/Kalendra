@@ -22,6 +22,17 @@ WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 
 SUPPORTED_FREQ = {"MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
 
+#: Ranges RFC 5545 §3.3.10 allows; zero is never valid where negatives are.
+RANGES = {
+    "BYMONTH": (1, 12, False),
+    "BYMONTHDAY": (1, 31, True),
+    "BYYEARDAY": (1, 366, True),
+    "BYWEEKNO": (1, 53, True),
+    "BYHOUR": (0, 23, False),
+    "BYMINUTE": (0, 59, False),
+    "BYSETPOS": (1, 366, True),
+}
+
 #: Nombre maximal d'occurrences produites par appel (garde-fou anti-boucle).
 MAX_OCCURRENCES = 10_000
 
@@ -250,8 +261,22 @@ def iter_occurrences(
 ) -> Iterator[datetime]:
     """Yield the occurrences of an RRULE from `dtstart` (inclusive).
 
-    Stops at `limit` occurrences, at `UNTIL`/`COUNT`, or at `horizon`.
+    Stops at `limit` occurrences, at `UNTIL`/`COUNT`, at `horizon`, or where
+    `datetime` stops: a long series can step past the year 9999, which raises
+    OverflowError or ValueError deep in date arithmetic. That is the end of
+    representable time, so the series simply ends there.
     """
+    try:
+        yield from _occurrences(dtstart, rule, limit=limit, horizon=horizon)
+    except UnsupportedRule:
+        raise
+    except (OverflowError, ValueError):
+        return
+
+
+def _occurrences(
+    dtstart: datetime, rule: dict, *, limit: int, horizon: datetime | None
+) -> Iterator[datetime]:
     freq = str(rule.get("FREQ", "")).upper()
     if freq not in SUPPORTED_FREQ:
         raise UnsupportedRule(f"FREQ non gérée : {freq or '(absente)'}")
@@ -263,6 +288,14 @@ def iter_occurrences(
     if rule.get("BYYEARDAY") and freq in {"DAILY", "WEEKLY", "MONTHLY"}:
         raise UnsupportedRule(f"BYYEARDAY avec FREQ={freq}")
     by_year = freq == "YEARLY" and bool(rule.get("BYYEARDAY") or rule.get("BYWEEKNO"))
+
+    # Out-of-range parts (BYMONTH=13) would crash date arithmetic further
+    # down; a malformed rule is unsupported, so the event is shown, not lost.
+    for part, (low, high, signed) in RANGES.items():
+        for value in rule.get(part) or ():
+            magnitude = abs(value) if signed else value
+            if not low <= magnitude <= high:
+                raise UnsupportedRule(f"{part}={value} hors limites")
 
     interval = max(1, int(rule.get("INTERVAL", 1) or 1))
     count = rule.get("COUNT")
@@ -414,13 +447,26 @@ def _parse_until(raw: str, dtstart: datetime) -> datetime | None:
 
 
 def last_occurrence(dtstart: datetime, rule: dict) -> datetime | None:
-    """Last occurrence of a bounded rule, or None when it is infinite."""
-    if not rule.get("COUNT") and not rule.get("UNTIL"):
+    """Last occurrence of a bounded rule, or None when it is infinite.
+
+    "Bounded" is judged on what the expansion will honour: an UNTIL that does
+    not parse bounds nothing, and a series still running when the guard rail
+    stops it is treated as endless. Returning that cut-off as its end would
+    hide every later occurrence from time-range queries.
+    """
+    until = rule.get("UNTIL")
+    if until and _parse_until(str(until), dtstart) is None:
+        until = None
+    if not rule.get("COUNT") and not until:
         return None
     last = None
+    produced = 0
     try:
         for moment in iter_occurrences(dtstart, rule, limit=MAX_OCCURRENCES):
             last = moment
+            produced += 1
     except UnsupportedRule:
+        return None
+    if produced >= MAX_OCCURRENCES:
         return None
     return last
