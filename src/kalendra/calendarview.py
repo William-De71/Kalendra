@@ -80,7 +80,8 @@ table.grille td.today { background:var(--today); }
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 @media (prefers-color-scheme: dark) { .evenement { background:rgba(138,166,255,.14); } }
 .evenement .heure { color:var(--muted); font-variant-numeric:tabular-nums; }
-.reste { display:block; font-size:12px; color:var(--muted); margin-top:3px; }
+.reste { display:block; font-size:12px; color:var(--muted); margin-top:3px;
+  text-decoration:none; }
 .vide { color:var(--muted); padding:28px 0; text-align:center; }
 .flash { padding:10px 14px; border-radius:10px; margin:0 24px 14px; border:1px solid var(--line);
   background:var(--card); }
@@ -124,6 +125,33 @@ h2.section:first-child { margin-top:0; }
 h3.proprietaire { font-size:14px; margin:18px 0 8px; color:var(--fg); }
 h3.proprietaire:first-of-type { margin-top:0; }
 footer { color:var(--muted); font-size:12.5px; padding:0 24px 32px; }
+/* View switcher: the current mode reads as pressed rather than as a link. */
+.titre .actions a[aria-current] { background:var(--rail-active); font-weight:600;
+  border-color:var(--line); color:var(--fg); }
+.titre .actions .sep { width:1px; align-self:stretch; background:var(--line);
+  margin:4px 2px; }
+/* Week: every event of the day is listed, so cells grow instead of folding
+   into "+N more", and titles may wrap. */
+table.semaine td { height:340px; }
+table.semaine .evenement { white-space:normal; }
+table.semaine th .date { display:block; color:var(--fg); font-size:15px;
+  text-transform:none; letter-spacing:0; }
+table.semaine th.today .date { color:var(--accent); }
+section.liste { max-width:760px; }
+section.liste h3 { font-size:14px; margin:22px 0 8px; }
+/* "Lundi 5 octobre": French capitalises the sentence, not every word. */
+section.liste h3::first-letter { text-transform:uppercase; }
+section.liste h3:first-child { margin-top:0; }
+section.liste h3.today { color:var(--accent); }
+section.liste ul { list-style:none; margin:0; padding:0; border:1px solid var(--line);
+  border-radius:10px; background:var(--card); }
+section.liste li { display:flex; gap:14px; padding:9px 14px;
+  border-top:1px solid var(--line); }
+section.liste li:first-child { border-top:none; }
+section.liste .heure { color:var(--muted); font-variant-numeric:tabular-nums;
+  min-width:96px; font-size:13.5px; }
+section.liste a { text-decoration:none; color:var(--fg); }
+section.liste a:hover { color:var(--accent); }
 @media (max-width:640px) {
   table.grille td { height:82px; }
   .evenement { font-size:11.5px; }
@@ -161,6 +189,25 @@ def parse_mois(raw: str, defaut: date) -> tuple[int, int]:
     if not (1 <= mois_i <= 12) or not (1 <= annee_i <= 9999):
         return defaut.year, defaut.month
     return annee_i, mois_i
+
+
+def parse_jour(raw: str, defaut: date) -> date:
+    """Decode the `d=YYYY-MM-DD` parameter of the week view."""
+    try:
+        return date.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return defaut
+
+
+def semaine_de(jour: date, aujourdhui: date) -> list[list[Jour]]:
+    """The Monday-to-Sunday week holding `jour`, as a one-row grid."""
+    lundi = jour - timedelta(days=jour.weekday())
+    return [
+        [
+            Jour(jour=j, dans_le_mois=True, aujourdhui=(j == aujourdhui))
+            for j in (lundi + timedelta(days=n) for n in range(7))
+        ]
+    ]
 
 
 def grille(annee: int, mois: int, aujourdhui: date) -> list[list[Jour]]:
@@ -286,6 +333,64 @@ def _formulaire_import(base: str, user: str, nom: str, token: str) -> str:
     )
 
 
+def _lien_vue(base: str, user: str, nom: str, **params: str) -> str:
+    requete = "&".join(f"{cle}={quote(valeur)}" for cle, valeur in params.items())
+    return f"{base}/view/{quote(user)}/{quote(nom)}/" + (f"?{requete}" if requete else "")
+
+
+def _horaire(occurrence: Occurrence, tz) -> str:
+    if occurrence.all_day:
+        return "journée"
+    debut = _local(occurrence.start, tz)
+    fin = _local(max(occurrence.end, occurrence.start), tz)
+    if fin.date() != debut.date() or fin == debut:
+        return f"{debut:%H:%M}"
+    return f"{debut:%H:%M}–{fin:%H:%M}"
+
+
+def _entete_agenda(
+    config,
+    calendar_row,
+    user: str,
+    vue: str,
+    periode: str,
+    precedent: str,
+    aujourdhui: str,
+    suivant: str,
+) -> str:
+    """Title bar shared by the three views: navigation, mode, export."""
+    base = config.base_path
+    nom = calendar_row["name"]
+
+    def onglet(cle: str, texte: str, cible: str) -> str:
+        marque = " aria-current='page'" if cle == vue else ""
+        return f"<a href='{cible}'{marque}>{texte}</a>"
+
+    return titre(
+        "<span class=pastille style='background:"
+        f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
+        f"<h1>{escape(calendar_row['display_name'] or nom)}</h1>"
+        f"<span class=meta>{escape(periode)}</span>",
+        f"<a href='{precedent}' aria-label='période précédente'>←</a>"
+        f"<a href='{aujourdhui}'>aujourd'hui</a>"
+        f"<a href='{suivant}' aria-label='période suivante'>→</a>"
+        "<span class=sep></span>"
+        + onglet("mois", "Mois", _lien_vue(base, user, nom))
+        + onglet("semaine", "Semaine", _lien_vue(base, user, nom, vue="semaine"))
+        + onglet("liste", "Liste", _lien_vue(base, user, nom, vue="liste"))
+        + "<span class=sep></span>"
+        f"<a href='{_lien_vue(base, user, nom, export='ics')}' download>Exporter (.ics)</a>",
+    )
+
+
+def _pied(total: int) -> str:
+    return (
+        f"<footer>{total} occurrence{'s' if total > 1 else ''} affichée"
+        f"{'s' if total > 1 else ''} · vue en lecture seule : "
+        "pour créer ou modifier un événement, utilisez votre client CalDAV.</footer>"
+    )
+
+
 def rendre_mois(
     config,
     calendar_row,
@@ -319,7 +424,11 @@ def rendre_mois(
             reste = len(jour.evenements) - len(visibles)
             puces = "".join(_puce(o, base, user, nom, tz) for o in visibles)
             if reste > 0:
-                puces += f"<span class=reste>+{reste} autre{'s' if reste > 1 else ''}</span>"
+                # The week view lists them all: the overflow links there.
+                cible = _lien_vue(base, user, nom, vue="semaine", d=jour.jour.isoformat())
+                puces += (
+                    f"<a class=reste href='{cible}'>+{reste} autre{'s' if reste > 1 else ''}</a>"
+                )
             attribut = f" class='{' '.join(classes)}'" if classes else ""
             cellules.append(
                 f"<td{attribut}><div class=numero>{jour.jour.day}</div>{puces}</td>"
@@ -330,25 +439,21 @@ def rendre_mois(
     total = sum(len(jour.evenements) for semaine in semaines for jour in semaine)
 
     corps = (
-        titre(
-            "<span class=pastille style='background:"
-            f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
-            f"<h1>{escape(titre_agenda)}</h1>"
-            f"<span class=meta>{MOIS[mois - 1]} {annee}</span>",
-            f"<a href='{_lien_mois(base, user, nom, pa, pm)}'>←</a>"
-            f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>"
-            "aujourd'hui</a>"
-            f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>→</a>"
-            f"<a href='{base}/view/{quote(user)}/{quote(nom)}/?export=ics' download>"
-            "Exporter (.ics)</a>",
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "mois",
+            f"{MOIS[mois - 1]} {annee}",
+            _lien_mois(base, user, nom, pa, pm),
+            _lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month),
+            _lien_mois(base, user, nom, sa, sm),
         )
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + f"<main><table class=grille><tr>{entetes}</tr>{''.join(lignes)}</table>"
         + _formulaire_import(base, user, nom, token)
         + "</main>"
-        f"<footer>{total} occurrence{'s' if total > 1 else ''} affichée"
-        f"{'s' if total > 1 else ''} · vue en lecture seule : "
-        "pour créer ou modifier un événement, utilisez votre client CalDAV.</footer>"
+        + _pied(total)
     )
     return _page(
         f"{titre_agenda} — {MOIS[mois - 1]} {annee}",
@@ -356,6 +461,123 @@ def rendre_mois(
         base,
         admin,
         connecte,
+    )
+
+
+def rendre_semaine(
+    config,
+    calendar_row,
+    user: str,
+    tz,
+    semaine: list[Jour],
+    aujourdhui: date,
+    admin: bool = False,
+    connecte: str = "",
+) -> Response:
+    base = config.base_path
+    nom = calendar_row["name"]
+    lundi, dimanche = semaine[0].jour, semaine[-1].jour
+
+    entetes = "".join(
+        f"<th{' class=today' if j.aujourdhui else ''}>{JOURS[n][:3]}"
+        f"<span class=date>{j.jour.day}</span></th>"
+        for n, j in enumerate(semaine)
+    )
+    cellules = []
+    for jour in semaine:
+        puces = "".join(_puce(o, base, user, nom, tz) for o in jour.evenements)
+        classe = " class=today" if jour.aujourdhui else ""
+        cellules.append(f"<td{classe}>{puces}</td>")
+    total = sum(len(j.evenements) for j in semaine)
+
+    if lundi.month == dimanche.month:
+        periode = f"du {lundi.day} au {dimanche.day} {MOIS[dimanche.month - 1]} {dimanche.year}"
+    else:
+        periode = (
+            f"du {lundi.day} {MOIS[lundi.month - 1]} au {dimanche.day} "
+            f"{MOIS[dimanche.month - 1]} {dimanche.year}"
+        )
+
+    def vers(jour: date) -> str:
+        return _lien_vue(base, user, nom, vue="semaine", d=jour.isoformat())
+
+    corps = (
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "semaine",
+            periode,
+            vers(lundi - timedelta(days=7)),
+            vers(aujourdhui),
+            vers(lundi + timedelta(days=7)),
+        )
+        + f"<main><table class='grille semaine'><tr>{entetes}</tr>"
+        f"<tr>{''.join(cellules)}</tr></table></main>"
+        + _pied(total)
+    )
+    titre_agenda = calendar_row["display_name"] or nom
+    return _page(f"{titre_agenda} — semaine {periode}", corps, base, admin, connecte)
+
+
+def rendre_liste(
+    config,
+    calendar_row,
+    user: str,
+    annee: int,
+    mois: int,
+    tz,
+    semaines: list[list[Jour]],
+    aujourdhui: date,
+    admin: bool = False,
+    connecte: str = "",
+) -> Response:
+    """Agenda view: the month's days that hold something, one line per event."""
+    base = config.base_path
+    nom = calendar_row["name"]
+    pa, pm = mois_precedent(annee, mois)
+    sa, sm = mois_suivant(annee, mois)
+
+    blocs = []
+    total = 0
+    for semaine in semaines:
+        for jour in semaine:
+            if not jour.dans_le_mois or not jour.evenements:
+                continue
+            total += len(jour.evenements)
+            lignes = "".join(
+                f"<li><span class=heure>{_horaire(o, tz)}</span>"
+                f"<a href='{base}/view/{quote(user)}/{quote(nom)}/{quote(o.href)}'>"
+                f"{escape(o.summary or '(sans titre)')}</a></li>"
+                for o in jour.evenements
+            )
+            classe = " class=today" if jour.aujourdhui else ""
+            blocs.append(
+                f"<h3{classe}>{JOURS[jour.jour.weekday()]} {jour.jour.day} "
+                f"{MOIS[jour.jour.month - 1]}</h3><ul>{lignes}</ul>"
+            )
+
+    def vers(a: int, m: int) -> str:
+        return _lien_vue(base, user, nom, vue="liste", m=f"{a:04d}-{m:02d}")
+
+    contenu = "".join(blocs) or "<p class=vide>Rien de prévu ce mois-ci.</p>"
+    corps = (
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "liste",
+            f"{MOIS[mois - 1]} {annee}",
+            vers(pa, pm),
+            vers(aujourdhui.year, aujourdhui.month),
+            vers(sa, sm),
+        )
+        + f"<main><section class=liste>{contenu}</section></main>"
+        + _pied(total)
+    )
+    titre_agenda = calendar_row["display_name"] or nom
+    return _page(
+        f"{titre_agenda} — {MOIS[mois - 1]} {annee}", corps, base, admin, connecte
     )
 
 
@@ -1001,9 +1223,37 @@ def handle_view(
         )
 
     aujourdhui = datetime.now(tz).date() if tz else datetime.now().date()
+    vue = request.query_param("vue")
+    if vue == "semaine":
+        semaines = semaine_de(parse_jour(request.query_param("d"), aujourdhui), aujourdhui)
+        remplir(db, resource.calendar, semaines, tz)
+        return rendre_semaine(
+            config,
+            resource.calendar,
+            resource.user["username"],
+            tz,
+            semaines[0],
+            aujourdhui,
+            admin,
+            user_row["username"],
+        )
+
     annee, mois = parse_mois(request.query_param("m"), aujourdhui)
     semaines = grille(annee, mois, aujourdhui)
     remplir(db, resource.calendar, semaines, tz)
+    if vue == "liste":
+        return rendre_liste(
+            config,
+            resource.calendar,
+            resource.user["username"],
+            annee,
+            mois,
+            tz,
+            semaines,
+            aujourdhui,
+            admin,
+            user_row["username"],
+        )
     return rendre_mois(
         config,
         resource.calendar,

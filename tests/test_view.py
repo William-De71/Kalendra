@@ -204,6 +204,67 @@ class VueMensuelleTests(ServerTestCase):
         self.assertIn(f"{VUE}a.ics", self.mois().text)
 
 
+class AutresVuesTests(VueMensuelleTests):
+    """Week and list views, over the same fixtures as the month view."""
+
+    def vue(self, requete: str):
+        result = self.client.request("GET", f"{VUE}?{requete}", headers={"Accept": "text/html"})
+        self.assertStatus(result, 200)
+        return result.text
+
+    def test_semaine_affiche_sept_jours(self):
+        html = self.vue("vue=semaine&d=2026-03-18")
+        self.assertIn("table class='grille semaine'", html)
+        self.assertEqual(html.count("<span class=date>"), 7)
+        # Week of Monday March 16th: the stand-up is excluded that day, the
+        # trip covers the 18th and 19th.
+        self.assertEqual(evenements(html).count("Deplacement Stuttgart"), 2)
+        self.assertNotIn("Stand-up", evenements(html))
+        self.assertIn("du 16 au 22 mars 2026", html)
+
+    def test_semaine_a_cheval_sur_deux_mois(self):
+        html = self.vue("vue=semaine&d=2026-03-31")
+        self.assertIn("du 30 mars au 5 avril 2026", html)
+        self.assertIn("d=2026-03-23", html)
+        self.assertIn("d=2026-04-06", html)
+
+    def test_semaine_affiche_tout_sans_repli(self):
+        for index in range(MAX_PAR_JOUR + 3):
+            self.client.put(
+                f"{PERSO}charge-{index}.ics",
+                make_event(
+                    uid=f"charge-{index}",
+                    start=f"20260310T{9 + index:02d}0000Z",
+                    end=f"20260310T{10 + index:02d}0000Z",
+                    summary=f"Charge {index}",
+                ),
+            )
+        html = self.vue("vue=semaine&d=2026-03-10")
+        self.assertNotIn("class=reste", html)
+        self.assertEqual(sum(t.startswith("Charge") for t in evenements(html)), MAX_PAR_JOUR + 3)
+
+    def test_date_invalide_retombe_sur_aujourdhui(self):
+        for valeur in ("2026-02-30", "n'importe", ""):
+            with self.subTest(valeur=valeur):
+                self.vue(f"vue=semaine&d={valeur}")
+
+    def test_liste_du_mois(self):
+        html = self.vue("vue=liste&m=2026-03")
+        self.assertIn("<section class=liste>", html)
+        self.assertEqual(html.count(">Stand-up</a>"), 4)
+        self.assertIn("lundi 2 mars", html)
+        self.assertIn("journée", html)
+        self.assertIn("m=2026-04", html)
+
+    def test_liste_vide(self):
+        self.assertIn("Rien de prévu ce mois-ci", self.vue("vue=liste&m=2025-01"))
+
+    def test_onglet_courant_marque(self):
+        html = self.vue("vue=liste&m=2026-03")
+        self.assertIn("vue=liste' aria-current='page'>Liste", html)
+        self.assertNotIn("aria-current='page'>Mois", html)
+
+
 class DetailTests(ServerTestCase):
     def setUp(self) -> None:
         super().setUp()
