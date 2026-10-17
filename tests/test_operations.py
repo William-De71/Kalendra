@@ -164,6 +164,28 @@ class AccessLogTests(ServerTestCase):
         self.assertIn("status=401", journal.output[0])
         self.assertIn("user=-", journal.output[0])
 
+    def test_pas_dinjection_de_ligne(self):
+        # A client controls the path, the username and X-Forwarded-For: none
+        # of them may start a new log line.
+        self.config.trust_proxy = True
+        requete = Request(
+            "GET",
+            "/x\r\nip=1.2.3.4 method=GET path=/admin status=200",
+            headers={"x-forwarded-for": "6.6.6.6\n"},
+        )
+        with self.assertLogs("kalendra.access", "INFO") as journal:
+            self.app.dispatch(requete)
+        self.assertEqual(len(journal.output), 1)
+        self.assertNotIn("\n", journal.output[0])
+        self.assertNotIn("\r", journal.output[0])
+        self.assertIn("\\r\\nip=1.2.3.4", journal.output[0])
+
+    def test_for_log(self):
+        from kalendra.http import for_log
+
+        self.assertEqual(for_log("a\r\nb\x00c\x1bd"), "a\\r\\nb\\x00c\\x1bd")
+        self.assertEqual(for_log("élève /ok"), "élève /ok")
+
     def test_desactivable(self):
         self.config.access_log = False
         with self.assertNoLogs("kalendra.access", "INFO"):

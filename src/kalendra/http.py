@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
@@ -79,6 +80,21 @@ class Response:
     @property
     def reason(self) -> str:
         return STATUS_TEXT.get(self.status, "Unknown")
+
+
+_CONTROLE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def for_log(value: object) -> str:
+    """Neutralise control characters before a client-supplied value is logged.
+
+    A request path, a username or an X-Forwarded-For header is chosen by the
+    client: a CR/LF in it would forge a whole log line ("log injection"). They
+    are written as escapes instead, so the line stays one line and the
+    original bytes remain readable.
+    """
+    texte = str(value).replace("\r", "\\r").replace("\n", "\\n")
+    return _CONTROLE.sub(lambda m: f"\\x{ord(m.group()):02x}", texte)
 
 
 def text_response(

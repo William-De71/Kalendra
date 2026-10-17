@@ -57,6 +57,9 @@ versionnage sémantique.
   `DTSTART` pouvait être coupée trop tôt par l'horizon de recherche.
 - Un événement de durée nulle au tout début d'une plage n'y était pas compté,
   et une exception déplacée s'affichait à l'heure d'origine.
+- Injection de lignes dans le journal : un chemin de requête, un nom
+  d'utilisateur ou un `X-Forwarded-For` contenant un retour à la ligne pouvait
+  forger une fausse entrée. Les caractères de contrôle sont désormais échappés.
 
 ## [1.1.0] — 2026-09-06
 

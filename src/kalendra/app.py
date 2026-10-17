@@ -24,7 +24,7 @@ from .config import Config
 from .dav import DavHandler
 from .db import Database
 from .feed import handle_feed
-from .http import Request, Response, error, text_response
+from .http import Request, Response, error, for_log, text_response
 from .security import csrf_token, verify_password
 
 logger = logging.getLogger("kalendra")
@@ -242,12 +242,12 @@ class Kalendra:
         access_logger.log(
             level,
             "ip=%s method=%s path=%s status=%d ms=%.1f user=%s",
-            client_ip(request, self.config.trust_proxy) or "-",
-            method,
-            _loggable_path(path, self.config.base_path),
+            for_log(client_ip(request, self.config.trust_proxy) or "-"),
+            for_log(method),
+            for_log(_loggable_path(path, self.config.base_path)),
             status,
             (time.perf_counter() - started) * 1000,
-            user,
+            for_log(user),
         )
 
     def _route(self, request: Request) -> Response:

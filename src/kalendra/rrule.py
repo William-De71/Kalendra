@@ -330,7 +330,6 @@ def _occurrences(
                 if emitted >= limit:
                     return
             moment = moment + step
-        return
 
     if freq == "WEEKLY":
         wkst = WEEKDAYS.get(str(rule.get("WKST", "MO")), 0)
@@ -369,7 +368,6 @@ def _occurrences(
             week_start = week_start + timedelta(weeks=interval)
             if horizon and week_start > horizon:
                 return
-        return
 
     # MONTHLY et YEARLY
     # Only the cursor's year and month matter. Pinning it to the 1st keeps

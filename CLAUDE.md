@@ -335,6 +335,9 @@ verbes WebDAV.
   plus à droite de `X-Forwarded-For` : c'est la seule qu'ajoute notre proxy.
 - Le journal d'accès ne contient **jamais** un jeton de flux : le chemin
   `/feed/<jeton>` y devient `/feed/…`.
+- Toute valeur choisie par le client (chemin, compte, `X-Forwarded-For`) passe
+  par `http.for_log` avant d'être journalisée : un CR/LF forgerait sinon une
+  ligne entière.
 
 ### Base de données
 
