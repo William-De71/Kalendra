@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from html import escape
 
+from .http import Request
+
 # Palette and primitives shared by both interfaces. Page-specific rules stay in
 # their own module; anything here is what makes the two look like one site.
 BASE_STYLE = """
@@ -94,6 +96,7 @@ _ICONES = {
     "agenda": "<rect x='3' y='4.5' width='18' height='16' rx='2.5'/>"
     "<path d='M8 2.5v4M16 2.5v4M3 9.5h18'/>",
     "admin": "<path d='M12 2.5 4 6v5.5c0 4.6 3.2 8.6 8 10 4.8-1.4 8-5.4 8-10V6l-8-3.5Z'/>",
+    "compte": "<circle cx='12' cy='8' r='4'/><path d='M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7'/>",
 }
 
 
@@ -109,7 +112,7 @@ def _item(href: str, icone: str, texte: str, actif: bool) -> str:
 def rail(base: str, actif: str, admin: bool, username: str = "", version: str = "") -> str:
     """Sidebar shared by both interfaces.
 
-    `actif` names the current section ("agendas" or "admin") so the entry is
+    `actif` names the current section ("agendas", "compte" or "admin") so the entry is
     highlighted. Administration is omitted for a plain user: /admin
     would answer 403, and showing a door that does not open is worse than
     showing none.
@@ -120,6 +123,7 @@ def rail(base: str, actif: str, admin: bool, username: str = "", version: str = 
         f"<a class=marque href='{base}/view/'><span class=point></span>Kalendra</a>",
         _item(f"{base}/view/", "agenda", "Agendas et contacts", actif == "agendas"),
     ]
+    items.append(_item(f"{base}/view/compte/", "compte", "Mon compte", actif == "compte"))
     if admin:
         items.append(_item(f"{base}/admin", "admin", "Administration", actif == "admin"))
     if username:
@@ -139,3 +143,12 @@ def titre(contenu: str, actions: str = "") -> str:
     """Fixed-height page header, to the right of the rail."""
     bloc = f"<div class=actions>{actions}</div>" if actions else ""
     return f"<div class=titre>{contenu}{bloc}</div>"
+
+
+def public_base_url(config, request: Request) -> str:
+    """Absolute URL of the server root, as clients should be told to reach it."""
+    if config.public_url:
+        return config.public_url
+    host = request.header("x-forwarded-host") or request.header("host") or "localhost"
+    scheme = request.header("x-forwarded-proto") or "http"
+    return f"{scheme}://{host}{config.base_path}"

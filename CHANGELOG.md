@@ -5,6 +5,62 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Ajouté
+
+- `kalendra backup <fichier|dossier>` : copie cohérente de la base serveur en
+  marche, par l'API de sauvegarde de SQLite (ou `VACUUM INTO` avec
+  `--compact`), vérifiée et sans fichier `-wal` à côté.
+- Freinage des connexions : après `KALENDRA_AUTH_MAX_FAILURES` échecs en
+  `KALENDRA_AUTH_LOCKOUT` secondes, une adresse reçoit `429` avec
+  `Retry-After`. Compté par adresse, jamais par compte.
+  `KALENDRA_TRUST_PROXY` lit l'adresse dans `X-Forwarded-For` derrière un
+  reverse proxy.
+- Journal d'accès `clé=valeur`, une ligne par requête (adresse, méthode,
+  chemin, statut, durée, compte), jetons de flux masqués ;
+  `KALENDRA_ACCESS_LOG=false` le coupe.
+- Mots de passe d'application, un par appareil et révocables un à un
+  (`kalendra app-password`, ou la page « Mon compte »). Ils ouvrent CalDAV et
+  CardDAV, jamais l'interface web. Schéma de base v4.
+- Quota par compte (`KALENDRA_QUOTA_BYTES`, RFC 4331) : `507` et précondition
+  `quota-not-exceeded` au-delà, `quota-available-bytes` annoncé.
+- Options `<C:expand>` et `<C:limit-recurrence-set>` de `calendar-data` dans
+  `calendar-query` et `calendar-multiget` (RFC 4791 §9.6.5-6).
+- Expansion de `BYWEEKNO` et `BYYEARDAY`, vérifiée contre `python-dateutil`.
+- Vues **semaine** et **liste** dans `/view/`, à côté de la vue mensuelle.
+- Export d'un agenda en `.ics` et d'un carnet en `.vcf` depuis `/view/` et en
+  ligne de commande ; import d'un `.vcf` dans un carnet (`kalendra calendar
+  export|import`, `kalendra addressbook export|import`).
+- Page « Mon compte » (`/view/compte/`) : adresses à saisir et marche à suivre
+  par client, profil de configuration Apple (`.mobileconfig`), mots de passe
+  d'application, espace utilisé.
+- Fuzzing par mutation de tous les analyseurs (`tests/test_fuzz.py`) et
+  lecture des flux publics par la bibliothèque indépendante `icalendar` en
+  intégration continue.
+
+### Corrigé
+
+- Les récurrences étaient développées en UTC plutôt que dans le fuseau de leur
+  `DTSTART` : une réunion hebdomadaire à 10 h (Europe/Paris) créée en hiver
+  s'affichait à 11 h tout l'été, et les `EXDATE` et exceptions d'été ne
+  correspondaient plus à leur occurrence.
+- Flux publics mal formés dès qu'un événement portait un rappel : le
+  `END:VALARM` disparaissait. Les lignes de continuation pliées faisaient en
+  outre 76 octets au lieu de 75.
+- Un événement annuel le 29 février faisait échouer l'expansion les années non
+  bissextiles ; un mensuel le 31 glissait au 30 au lieu de sauter les mois
+  trop courts (RFC 5545 §3.3.10).
+- Erreurs 500 provoquées par un client : valeur `BY*` hors limites
+  (`BYMONTH=13`), série dépassant l'an 9999, `DURATION` démesurée.
+- Une règle à l'`UNTIL` illisible passait pour bornée : ses occurrences
+  ultérieures disparaissaient des requêtes par plage.
+- Une série `YEARLY` ou `MONTHLY` dont la période commence avant le jour du
+  `DTSTART` pouvait être coupée trop tôt par l'horizon de recherche.
+- Un événement de durée nulle au tout début d'une plage n'y était pas compté,
+  et une exception déplacée s'affichait à l'heure d'origine.
+- Injection de lignes dans le journal : un chemin de requête, un nom
+  d'utilisateur ou un `X-Forwarded-For` contenant un retour à la ligne pouvait
+  forger une fausse entrée. Les caractères de contrôle sont désormais échappés.
+
 ## [1.1.0] — 2026-09-06
 
 ### Ajouté

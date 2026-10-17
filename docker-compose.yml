@@ -15,6 +15,9 @@ services:
       KALENDRA_ADMIN_USER: "${KALENDRA_ADMIN_USER:-admin}"
       KALENDRA_ADMIN_PASSWORD: "${KALENDRA_ADMIN_PASSWORD:?definissez KALENDRA_ADMIN_PASSWORD dans .env}"
       KALENDRA_LOG_LEVEL: "info"
+      # Facultatifs, à renseigner dans .env (voir .env.example).
+      KALENDRA_TRUST_PROXY: "${KALENDRA_TRUST_PROXY:-false}"
+      KALENDRA_QUOTA_BYTES: "${KALENDRA_QUOTA_BYTES:-0}"
       TZ: "${TZ:-Europe/Paris}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5232/health', timeout=4).status==200 else 1)"]

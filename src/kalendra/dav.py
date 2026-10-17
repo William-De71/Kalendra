@@ -13,7 +13,9 @@ from .db import http_date
 from .http import Request, Response, error, text_response, xml_response
 from .ics import (
     InvalidCalendarData,
+    expand_calendar,
     ical_utc,
+    limit_recurrence_set,
     overlaps_range,
     parse_object,
     parse_range_value,
@@ -158,13 +160,46 @@ def _requested_props(body_root: ET.Element | None) -> tuple[list[str], bool, boo
     return [], True, False
 
 
+def _calendar_data_transform(body_root: ET.Element | None):
+    """Read `<C:expand>` / `<C:limit-recurrence-set>` inside `<C:calendar-data>`.
+
+    Returns a function rewriting the served text, or None. Only the response
+    is computed differently: what is stored stays as the client uploaded it.
+    """
+    if body_root is None:
+        return None
+    prop_node = body_root.find(dav("prop"))
+    data_node = prop_node.find(caldav("calendar-data")) if prop_node is not None else None
+    if data_node is None:
+        return None
+    for tag, function in (
+        (caldav("expand"), expand_calendar),
+        (caldav("limit-recurrence-set"), limit_recurrence_set),
+    ):
+        option = data_node.find(tag)
+        if option is not None:
+            start = parse_range_value(option.get("start"))
+            end = parse_range_value(option.get("end"))
+            return lambda text, f=function, a=start, b=end: f(text, a, b)
+    return None
+
+
 def _fill_response(
-    node: ET.Element, resource: Resource, ctx: PropContext, requested: list[str], allprop: bool
+    node: ET.Element,
+    resource: Resource,
+    ctx: PropContext,
+    requested: list[str],
+    allprop: bool,
+    transform=None,
 ) -> None:
     from .props import ALLPROP
 
     names = list(requested) if not allprop else list(ALLPROP)
     found, missing = resolve_props(resource, ctx, names)
+    if transform is not None:
+        for prop in found:
+            if prop.tag == caldav("calendar-data") and prop.text:
+                prop.text = transform(prop.text)
     propstat(node, found, STATUS_OK)
     if not allprop:
         propstat(node, missing, STATUS_NOT_FOUND)
@@ -373,6 +408,20 @@ class DavHandler:
 
         data = request.body.decode("utf-8", "replace")
 
+        quota = self.config.quota_bytes
+        if quota > 0:
+            # Charged to the collection's owner, not to whoever writes: an
+            # administrator filling someone's calendar uses that account's space.
+            taille = len(data.encode("utf-8"))
+            ancienne = int(existing["size"]) if existing is not None else 0
+            usage = self.db.account_usage(resource.calendar["user_id"])
+            if usage - ancienne + taille > quota:
+                return self._precondition(
+                    dav("quota-not-exceeded"),
+                    f"Quota dépassé : {usage} octets utilisés sur {quota}.",
+                    status=507,
+                )
+
         if carnet:
             try:
                 card = parse_vcard(data)
@@ -526,12 +575,12 @@ class DavHandler:
         return options
 
     @staticmethod
-    def _precondition(tag: str, message: str) -> Response:
+    def _precondition(tag: str, message: str, status: int = 403) -> Response:
         root = ET.Element(dav("error"))
         ET.SubElement(root, tag)
         detail = ET.SubElement(root, dav("responsedescription"))
         detail.text = message
-        return xml_response(403, to_bytes(root))
+        return xml_response(status, to_bytes(root))
 
     # ---------------------------------------------------------------- REPORT
 
@@ -580,6 +629,7 @@ class DavHandler:
         filter_node = root.find(caldav("filter"))
         comp_node = filter_node.find(caldav("comp-filter")) if filter_node is not None else None
         comp_filter = _parse_comp_filter(comp_node) if comp_node is not None else None
+        transform = _calendar_data_transform(root)
 
         ms = multistatus()
         for calendar_resource in scope:
@@ -594,7 +644,7 @@ class DavHandler:
                     name=row["href"],
                 )
                 node = response_node(self.href(child.path))
-                _fill_response(node, child, self.ctx, requested, allprop)
+                _fill_response(node, child, self.ctx, requested, allprop, transform)
                 ms.append(node)
         return xml_response(207, to_bytes(ms))
 
@@ -602,6 +652,7 @@ class DavHandler:
         self, request: Request, resource: Resource, root: ET.Element
     ) -> Response:
         requested, allprop, _ = _requested_props(root)
+        transform = _calendar_data_transform(root)
         ms = multistatus()
         for href_node in root.findall(dav("href")):
             raw = (href_node.text or "").strip()
@@ -611,7 +662,7 @@ class DavHandler:
                 status = ET.SubElement(node, dav("status"))
                 status.text = "HTTP/1.1 404 Not Found"
             else:
-                _fill_response(node, child, self.ctx, requested, allprop)
+                _fill_response(node, child, self.ctx, requested, allprop, transform)
             ms.append(node)
         return xml_response(207, to_bytes(ms))
 

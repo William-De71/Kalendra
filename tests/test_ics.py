@@ -176,6 +176,125 @@ class RecurrenceTests(unittest.TestCase):
         self.assertIsNone(last_occurrence(start, parse_rrule("FREQ=DAILY")))
 
 
+class YearlyByWeekAndDayTests(unittest.TestCase):
+    """BYWEEKNO / BYYEARDAY; expected dates checked against python-dateutil."""
+
+    def dates(self, start: datetime, rule: str) -> list[str]:
+        return [d.strftime("%Y%m%d") for d in iter_occurrences(start, parse_rrule(rule))]
+
+    def test_lundi_de_la_semaine_20(self):
+        self.assertEqual(
+            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO;COUNT=3"),
+            ["20260511", "20270517", "20280515"],
+        )
+
+    def test_la_semaine_1_peut_commencer_en_decembre(self):
+        self.assertEqual(
+            self.dates(datetime(2025, 6, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;COUNT=3"),
+            ["20251229", "20270104", "20280103"],
+        )
+
+    def test_derniere_semaine_de_lannee(self):
+        self.assertEqual(
+            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=-1;BYDAY=FR;COUNT=3"),
+            ["20270101", "20271231", "20281229"],
+        )
+
+    def test_wkst_deplace_la_semaine_1(self):
+        self.assertEqual(
+            self.dates(
+                datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;WKST=SU;COUNT=2"
+            ),
+            ["20260105", "20270104"],
+        )
+
+    def test_jours_de_lannee(self):
+        self.assertEqual(
+            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYYEARDAY=1,100,200;COUNT=4"),
+            ["20260101", "20260410", "20260719", "20270101"],
+        )
+
+    def test_jour_de_lannee_negatif(self):
+        self.assertEqual(
+            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYYEARDAY=-1;COUNT=3"),
+            ["20261231", "20271231", "20281231"],
+        )
+
+    def test_combinaisons_interdites_restent_tolerees(self):
+        from kalendra.rrule import UnsupportedRule
+
+        start = datetime(2026, 1, 1, 9, tzinfo=UTC)
+        for regle in ("FREQ=MONTHLY;BYWEEKNO=3", "FREQ=DAILY;BYYEARDAY=3"):
+            with self.assertRaises(UnsupportedRule):
+                list(iter_occurrences(start, parse_rrule(regle)))
+
+    def test_ne_remonte_plus_dans_toutes_les_plages(self):
+        # Before, these rules were unexpanded and so matched every range.
+        data = (
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:y\r\nDTSTART:20260410T090000Z\r\n"
+            "DTEND:20260410T100000Z\r\nRRULE:FREQ=YEARLY;BYYEARDAY=100\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+        self.assertFalse(overlaps_range(data, ts("20270201T000000Z"), ts("20270301T000000Z")))
+        self.assertTrue(overlaps_range(data, ts("20270410T000000Z"), ts("20270411T000000Z")))
+
+
+HEBDO_PARIS = (
+    "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:p\r\n"
+    "DTSTART;TZID=Europe/Paris:20260105T100000\r\nDTEND;TZID=Europe/Paris:20260105T110000\r\n"
+    "RRULE:FREQ=WEEKLY;BYDAY=MO\r\nEXDATE;TZID=Europe/Paris:20260615T100000\r\n"
+    "SUMMARY:Point\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+class DaylightSavingTests(unittest.TestCase):
+    """A rule recurs in DTSTART's zone, not in UTC (RFC 5545 §3.3.10)."""
+
+    def test_lheure_locale_est_conservee_en_ete(self):
+        from kalendra.ics import expand_occurrences
+
+        found = expand_occurrences(HEBDO_PARIS, ts("20260608T000000Z"), ts("20260609T000000Z"))
+        self.assertEqual([o.start for o in found], [ts("20260608T080000Z")])
+        found = expand_occurrences(HEBDO_PARIS, ts("20260112T000000Z"), ts("20260113T000000Z"))
+        self.assertEqual([o.start for o in found], [ts("20260112T090000Z")])
+
+    def test_exdate_dete_respecte(self):
+        self.assertFalse(
+            overlaps_range(HEBDO_PARIS, ts("20260615T000000Z"), ts("20260616T000000Z"))
+        )
+        self.assertTrue(
+            overlaps_range(HEBDO_PARIS, ts("20260622T080000Z"), ts("20260622T081000Z"))
+        )
+
+    def test_borne_finale_en_heure_locale(self):
+        data = HEBDO_PARIS.replace("BYDAY=MO", "BYDAY=MO;COUNT=30")
+        # 30 Mondays from January 5th: July 27th, 10:00-11:00 Paris = 09:00Z.
+        self.assertEqual(parse_object(data).end, ts("20260727T090000Z"))
+
+
+class InvalidDateTests(unittest.TestCase):
+    """RFC 5545 §3.3.10: a date that does not exist is skipped, never moved."""
+
+    def test_29_fevrier_annuel(self):
+        start = datetime(2024, 2, 29, 9, tzinfo=UTC)
+        dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, parse_rrule("FREQ=YEARLY;COUNT=3"))]
+        self.assertEqual(dates, ["20240229", "20280229", "20320229"])
+
+    def test_le_31_mensuel(self):
+        start = datetime(2026, 1, 31, 9, tzinfo=UTC)
+        dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, parse_rrule("FREQ=MONTHLY;COUNT=4"))]
+        self.assertEqual(dates, ["20260131", "20260331", "20260531", "20260731"])
+
+    def test_horizon_avant_le_jour_de_dtstart(self):
+        # DTSTART on June 15th, occurrences in January: the January period must
+        # not be cut off by a horizon falling between the two.
+        start = datetime(2026, 6, 15, 9, tzinfo=UTC)
+        rule = parse_rrule("FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=10")
+        horizon = datetime(2027, 2, 1, tzinfo=UTC)
+        dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, rule, horizon=horizon)]
+        self.assertEqual(dates, ["20270110"])
+
+
 class TimeRangeTests(unittest.TestCase):
     def test_occurrence_lointaine_trouvee(self):
         self.assertTrue(

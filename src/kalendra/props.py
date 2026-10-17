@@ -304,6 +304,16 @@ def _quota_used(resource: Resource, ctx: PropContext) -> ET.Element | None:
     return element(dav("quota-used-bytes"), str(row["total"]))
 
 
+def _quota_available(resource: Resource, ctx: PropContext) -> ET.Element | None:
+    # RFC 4331 lets the quota span more than the collection: here it is the
+    # account's, so every collection of an account reports the same headroom.
+    quota = getattr(ctx.config, "quota_bytes", 0)
+    if quota <= 0 or resource.kind != Kind.CALENDAR or resource.calendar is None:
+        return None
+    usage = ctx.db.account_usage(resource.calendar["user_id"])
+    return element(dav("quota-available-bytes"), str(max(0, quota - usage)))
+
+
 def sync_token(calendar) -> str:
     """Jeton opaque de synchronisation, monotone par agenda."""
     return f"urn:kalendra:sync:{calendar['id']}:{calendar['sync_rev']}"
@@ -337,6 +347,7 @@ HANDLERS = {
     dav("getlastmodified"): _getlastmodified,
     dav("sync-token"): _sync_token,
     dav("quota-used-bytes"): _quota_used,
+    dav("quota-available-bytes"): _quota_available,
     caldav("calendar-home-set"): _calendar_home_set,
     caldav("calendar-user-address-set"): _calendar_user_address_set,
     caldav("supported-calendar-component-set"): _supported_calendar_component_set,

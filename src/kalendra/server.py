@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__
 from .app import Kalendra
-from .http import Request, Response, error
+from .http import Request, Response, error, for_log
 
 logger = logging.getLogger("kalendra")
 
@@ -45,7 +45,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             response = self._build_response()
         except Exception:
-            logger.exception("erreur interne sur %s %s", self.command, self.path)
+            logger.exception(
+                "erreur interne sur %s %s", for_log(self.command), for_log(self.path)
+            )
             response = error(500, "Erreur interne.")
         self._write(response)
 
@@ -70,6 +72,7 @@ class _Handler(BaseHTTPRequestHandler):
             query=query,
             headers={key.lower(): value for key, value in self.headers.items()},
             body=body,
+            remote_addr=self.client_address[0] if self.client_address else "",
         )
         return self.application.dispatch(request)
 
@@ -108,11 +111,17 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             logger.debug("client déconnecté pendant l'écriture de la réponse")
 
+    def log_request(self, code="-", size="-") -> None:
+        # Kalendra.dispatch writes its own access line, with the account and
+        # the duration; the stdlib one would only duplicate it, feed tokens
+        # included.
+        pass
+
     def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - bruit
-        logger.info("%s %s", self.address_string(), fmt % args)
+        logger.info("%s %s", self.address_string(), for_log(fmt % args))
 
     def log_error(self, fmt: str, *args) -> None:  # pragma: no cover - bruit
-        logger.warning("%s %s", self.address_string(), fmt % args)
+        logger.warning("%s %s", self.address_string(), for_log(fmt % args))
 
 
 class KalendraServer(ThreadingHTTPServer):

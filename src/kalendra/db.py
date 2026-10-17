@@ -16,9 +16,9 @@ import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
-from .security import hash_password, new_token
+from .security import app_password_digest, hash_password, new_token
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: Definition of `calendars`, shared between the initial schema and the v3
 #: migration that rebuilds the table to widen its uniqueness constraint.
@@ -91,6 +91,20 @@ CREATE TABLE IF NOT EXISTS changes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_changes_rev ON changes (calendar_id, sync_rev);
+
+-- Per-device credentials (v4). Only a SHA-256 digest is kept: the secret is
+-- 32 random bytes, so a slow hash would add cost without adding safety, and a
+-- fast one lets authentication find the row with an index lookup.
+CREATE TABLE IF NOT EXISTS app_passwords (
+    id           INTEGER PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label        TEXT    NOT NULL,
+    token_hash   TEXT    NOT NULL UNIQUE,
+    created_at   TEXT    NOT NULL,
+    last_used_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_passwords_user ON app_passwords (user_id);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -172,6 +186,9 @@ def init_db(conn: sqlite3.Connection) -> None:
                 "PRAGMA foreign_keys=on;"
             )
 
+    # v4 (app_passwords) only adds a table: `executescript(SCHEMA)` above has
+    # already created it, IF NOT EXISTS, on old databases as on new ones.
+
     if version < SCHEMA_VERSION:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     with transaction(conn):
@@ -225,6 +242,44 @@ class Database:
     def secret_key(self) -> str:
         row = self.conn.execute("SELECT value FROM meta WHERE key = 'secret_key'").fetchone()
         return row["value"] if row else "kalendra"
+
+    def backup(self, destination: str, *, compact: bool = False) -> int:
+        """Write a consistent copy of the live database to `destination`.
+
+        Copying `kalendra.db` with `cp` while the server runs is unsafe in WAL
+        mode: recent commits still sit in `kalendra.db-wal`, and a copy taken
+        between a write and a checkpoint can come out torn. SQLite's online
+        backup API, or `VACUUM INTO`, reads one snapshot and produces a
+        self-contained file — the WAL folded in — without stopping writers.
+
+        `compact` uses `VACUUM INTO`, which also drops free pages: smaller, but
+        it rebuilds every index, so it costs more on a large database.
+        Returns the size of the copy in bytes.
+        """
+        destination = os.path.abspath(destination)
+        if os.path.exists(destination):
+            raise FileExistsError(destination)
+        directory = os.path.dirname(destination)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        if compact:
+            self.conn.execute("VACUUM INTO ?", (destination,))
+        else:
+            target = sqlite3.connect(destination)
+            try:
+                self.conn.backup(target)
+            finally:
+                target.close()
+        # The copy must not depend on a -wal file that would not travel with it.
+        check = sqlite3.connect(destination)
+        try:
+            check.execute("PRAGMA journal_mode = DELETE")
+            ok = check.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            check.close()
+        if ok != "ok":
+            raise sqlite3.DatabaseError(f"copie corrompue : {ok}")
+        return os.path.getsize(destination)
 
     # ------------------------------------------------------------ utilisateurs
 
@@ -305,6 +360,57 @@ class Database:
                 "SELECT COUNT(*) AS n FROM users WHERE is_admin = 1"
             ).fetchone()["n"]
         )
+
+    # ------------------------------------------------ mots de passe d'application
+
+    def create_app_password(self, user_id: int, label: str) -> tuple[int, str]:
+        """Create a credential for one device; the secret is returned only here."""
+        label = label.strip()[:80]
+        if not label:
+            raise ValueError("un libellé est nécessaire pour reconnaître l'appareil")
+        secret = new_token(24)
+        with transaction(self.conn) as conn:
+            cur = conn.execute(
+                "INSERT INTO app_passwords (user_id, label, token_hash, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (user_id, label, app_password_digest(secret), utcnow()),
+            )
+            return int(cur.lastrowid), secret
+
+    def find_app_password(self, user_id: int, secret: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM app_passwords WHERE user_id = ? AND token_hash = ?",
+            (user_id, app_password_digest(secret)),
+        ).fetchone()
+
+    def get_app_password(self, app_password_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM app_passwords WHERE id = ?", (app_password_id,)
+        ).fetchone()
+
+    def list_app_passwords(self, user_id: int) -> list[sqlite3.Row]:
+        return list(
+            self.conn.execute(
+                "SELECT * FROM app_passwords WHERE user_id = ? ORDER BY created_at, id",
+                (user_id,),
+            )
+        )
+
+    def touch_app_password(self, app_password_id: int) -> None:
+        with transaction(self.conn) as conn:
+            conn.execute(
+                "UPDATE app_passwords SET last_used_at = ? WHERE id = ?",
+                (utcnow(), app_password_id),
+            )
+
+    def delete_app_password(self, user_id: int, app_password_id: int) -> bool:
+        """Revoke; scoped to `user_id` so an id guessed in a form revokes nothing else."""
+        with transaction(self.conn) as conn:
+            cur = conn.execute(
+                "DELETE FROM app_passwords WHERE id = ? AND user_id = ?",
+                (app_password_id, user_id),
+            )
+            return cur.rowcount > 0
 
     # --------------------------------------------------------------- agendas
 
@@ -467,6 +573,15 @@ class Database:
                 "SELECT calendar_id, COUNT(*) AS n FROM objects GROUP BY calendar_id"
             )
         }
+
+    def account_usage(self, user_id: int) -> int:
+        """Bytes stored by an account, calendars and address books together."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(o.size), 0) AS n FROM objects o"
+            " JOIN calendars c ON c.id = o.calendar_id WHERE c.user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["n"])
 
     def calendar_stats(self, calendar_id: int) -> int:
         row = self.conn.execute(

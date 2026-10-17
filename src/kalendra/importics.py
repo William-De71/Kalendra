@@ -32,6 +32,8 @@ class Rapport:
     remplaces: int = 0
     ignores: int = 0
     erreurs: list[str] = None  # type: ignore[assignment]
+    #: What is being counted, for the summary shown to the user.
+    unite: str = "événement"
 
     def __post_init__(self) -> None:
         if self.erreurs is None:
@@ -44,17 +46,17 @@ class Rapport:
     def resume(self) -> str:
         morceaux = []
         if self.crees:
-            morceaux.append(f"{self.crees} événement(s) ajouté(s)")
+            morceaux.append(f"{self.crees} {self.unite}(s) ajouté(s)")
         if self.remplaces:
             morceaux.append(f"{self.remplaces} mis à jour")
         if self.ignores:
             morceaux.append(f"{self.ignores} ignoré(s)")
         if not morceaux:
-            return "Aucun événement importé."
+            return f"Aucun {self.unite} importé."
         return ", ".join(morceaux) + "."
 
 
-def importer(db, calendar_row, contenu: str, *, max_taille: int) -> Rapport:
+def importer(db, calendar_row, contenu: str, *, max_taille: int, quota: int = 0) -> Rapport:
     """Store every component of `contenu` into the `calendar_row` calendar.
 
     The resource name derives from the UID: re-importing the same file updates
@@ -79,9 +81,14 @@ def importer(db, calendar_row, contenu: str, *, max_taille: int) -> Rapport:
         c.strip().upper() for c in str(calendar_row["components"]).split(",") if c.strip()
     }
 
+    # Tracked as the import goes rather than re-summed per object: a 5000-event
+    # file would otherwise run 5000 aggregate queries.
+    usage = db.account_usage(calendar_row["user_id"]) if quota > 0 else 0
+
     for index, bloc in enumerate(blocs, start=1):
         objet = wrap_component(preambule, bloc)
-        if len(objet.encode("utf-8")) > max_taille:
+        taille = len(objet.encode("utf-8"))
+        if taille > max_taille:
             rapport.ignores += 1
             rapport.erreurs.append(f"Événement {index} : trop volumineux.")
             continue
@@ -110,6 +117,14 @@ def importer(db, calendar_row, contenu: str, *, max_taille: int) -> Rapport:
         if conflit is not None and conflit["href"] != href:
             href = conflit["href"]
             existant = conflit
+
+        if quota > 0:
+            ancienne = int(existant["size"]) if existant is not None else 0
+            if usage - ancienne + taille > quota:
+                rapport.ignores += 1
+                rapport.erreurs.append(f"Événement {index} : quota du compte atteint.")
+                continue
+            usage += taille - ancienne
 
         db.put_object(
             calendar_row["id"],

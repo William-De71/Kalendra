@@ -19,6 +19,8 @@ from html import escape
 from urllib.parse import parse_qs, quote
 
 from . import __version__
+from .account import handle_account
+from .export import export_addressbook, export_calendar
 from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
     Occurrence,
@@ -29,6 +31,7 @@ from .ics import (
     to_unix,
 )
 from .importics import importer
+from .importvcf import importer_cartes
 from .resources import Kind, resolve
 from .security import csrf_valid
 from .vcard import InvalidCardData, parse_vcard
@@ -78,7 +81,8 @@ table.grille td.today { background:var(--today); }
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 @media (prefers-color-scheme: dark) { .evenement { background:rgba(138,166,255,.14); } }
 .evenement .heure { color:var(--muted); font-variant-numeric:tabular-nums; }
-.reste { display:block; font-size:12px; color:var(--muted); margin-top:3px; }
+.reste { display:block; font-size:12px; color:var(--muted); margin-top:3px;
+  text-decoration:none; }
 .vide { color:var(--muted); padding:28px 0; text-align:center; }
 .flash { padding:10px 14px; border-radius:10px; margin:0 24px 14px; border:1px solid var(--line);
   background:var(--card); }
@@ -122,6 +126,33 @@ h2.section:first-child { margin-top:0; }
 h3.proprietaire { font-size:14px; margin:18px 0 8px; color:var(--fg); }
 h3.proprietaire:first-of-type { margin-top:0; }
 footer { color:var(--muted); font-size:12.5px; padding:0 24px 32px; }
+/* View switcher: the current mode reads as pressed rather than as a link. */
+.titre .actions a[aria-current] { background:var(--rail-active); font-weight:600;
+  border-color:var(--line); color:var(--fg); }
+.titre .actions .sep { width:1px; align-self:stretch; background:var(--line);
+  margin:4px 2px; }
+/* Week: every event of the day is listed, so cells grow instead of folding
+   into "+N more", and titles may wrap. */
+table.semaine td { height:340px; }
+table.semaine .evenement { white-space:normal; }
+table.semaine th .date { display:block; color:var(--fg); font-size:15px;
+  text-transform:none; letter-spacing:0; }
+table.semaine th.today .date { color:var(--accent); }
+section.liste { max-width:760px; }
+section.liste h3 { font-size:14px; margin:22px 0 8px; }
+/* "Lundi 5 octobre": French capitalises the sentence, not every word. */
+section.liste h3::first-letter { text-transform:uppercase; }
+section.liste h3:first-child { margin-top:0; }
+section.liste h3.today { color:var(--accent); }
+section.liste ul { list-style:none; margin:0; padding:0; border:1px solid var(--line);
+  border-radius:10px; background:var(--card); }
+section.liste li { display:flex; gap:14px; padding:9px 14px;
+  border-top:1px solid var(--line); }
+section.liste li:first-child { border-top:none; }
+section.liste .heure { color:var(--muted); font-variant-numeric:tabular-nums;
+  min-width:96px; font-size:13.5px; }
+section.liste a { text-decoration:none; color:var(--fg); }
+section.liste a:hover { color:var(--accent); }
 @media (max-width:640px) {
   table.grille td { height:82px; }
   .evenement { font-size:11.5px; }
@@ -159,6 +190,25 @@ def parse_mois(raw: str, defaut: date) -> tuple[int, int]:
     if not (1 <= mois_i <= 12) or not (1 <= annee_i <= 9999):
         return defaut.year, defaut.month
     return annee_i, mois_i
+
+
+def parse_jour(raw: str, defaut: date) -> date:
+    """Decode the `d=YYYY-MM-DD` parameter of the week view."""
+    try:
+        return date.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return defaut
+
+
+def semaine_de(jour: date, aujourdhui: date) -> list[list[Jour]]:
+    """The Monday-to-Sunday week holding `jour`, as a one-row grid."""
+    lundi = jour - timedelta(days=jour.weekday())
+    return [
+        [
+            Jour(jour=j, dans_le_mois=True, aujourdhui=(j == aujourdhui))
+            for j in (lundi + timedelta(days=n) for n in range(7))
+        ]
+    ]
 
 
 def grille(annee: int, mois: int, aujourdhui: date) -> list[list[Jour]]:
@@ -284,6 +334,64 @@ def _formulaire_import(base: str, user: str, nom: str, token: str) -> str:
     )
 
 
+def _lien_vue(base: str, user: str, nom: str, **params: str) -> str:
+    requete = "&".join(f"{cle}={quote(valeur)}" for cle, valeur in params.items())
+    return f"{base}/view/{quote(user)}/{quote(nom)}/" + (f"?{requete}" if requete else "")
+
+
+def _horaire(occurrence: Occurrence, tz) -> str:
+    if occurrence.all_day:
+        return "journée"
+    debut = _local(occurrence.start, tz)
+    fin = _local(max(occurrence.end, occurrence.start), tz)
+    if fin.date() != debut.date() or fin == debut:
+        return f"{debut:%H:%M}"
+    return f"{debut:%H:%M}–{fin:%H:%M}"
+
+
+def _entete_agenda(
+    config,
+    calendar_row,
+    user: str,
+    vue: str,
+    periode: str,
+    precedent: str,
+    aujourdhui: str,
+    suivant: str,
+) -> str:
+    """Title bar shared by the three views: navigation, mode, export."""
+    base = config.base_path
+    nom = calendar_row["name"]
+
+    def onglet(cle: str, texte: str, cible: str) -> str:
+        marque = " aria-current='page'" if cle == vue else ""
+        return f"<a href='{cible}'{marque}>{texte}</a>"
+
+    return titre(
+        "<span class=pastille style='background:"
+        f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
+        f"<h1>{escape(calendar_row['display_name'] or nom)}</h1>"
+        f"<span class=meta>{escape(periode)}</span>",
+        f"<a href='{precedent}' aria-label='période précédente'>←</a>"
+        f"<a href='{aujourdhui}'>aujourd'hui</a>"
+        f"<a href='{suivant}' aria-label='période suivante'>→</a>"
+        "<span class=sep></span>"
+        + onglet("mois", "Mois", _lien_vue(base, user, nom))
+        + onglet("semaine", "Semaine", _lien_vue(base, user, nom, vue="semaine"))
+        + onglet("liste", "Liste", _lien_vue(base, user, nom, vue="liste"))
+        + "<span class=sep></span>"
+        f"<a href='{_lien_vue(base, user, nom, export='ics')}' download>Exporter (.ics)</a>",
+    )
+
+
+def _pied(total: int) -> str:
+    return (
+        f"<footer>{total} occurrence{'s' if total > 1 else ''} affichée"
+        f"{'s' if total > 1 else ''} · vue en lecture seule : "
+        "pour créer ou modifier un événement, utilisez votre client CalDAV.</footer>"
+    )
+
+
 def rendre_mois(
     config,
     calendar_row,
@@ -317,7 +425,11 @@ def rendre_mois(
             reste = len(jour.evenements) - len(visibles)
             puces = "".join(_puce(o, base, user, nom, tz) for o in visibles)
             if reste > 0:
-                puces += f"<span class=reste>+{reste} autre{'s' if reste > 1 else ''}</span>"
+                # The week view lists them all: the overflow links there.
+                cible = _lien_vue(base, user, nom, vue="semaine", d=jour.jour.isoformat())
+                puces += (
+                    f"<a class=reste href='{cible}'>+{reste} autre{'s' if reste > 1 else ''}</a>"
+                )
             attribut = f" class='{' '.join(classes)}'" if classes else ""
             cellules.append(
                 f"<td{attribut}><div class=numero>{jour.jour.day}</div>{puces}</td>"
@@ -328,23 +440,21 @@ def rendre_mois(
     total = sum(len(jour.evenements) for semaine in semaines for jour in semaine)
 
     corps = (
-        titre(
-            "<span class=pastille style='background:"
-            f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
-            f"<h1>{escape(titre_agenda)}</h1>"
-            f"<span class=meta>{MOIS[mois - 1]} {annee}</span>",
-            f"<a href='{_lien_mois(base, user, nom, pa, pm)}'>←</a>"
-            f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>"
-            "aujourd'hui</a>"
-            f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>→</a>",
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "mois",
+            f"{MOIS[mois - 1]} {annee}",
+            _lien_mois(base, user, nom, pa, pm),
+            _lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month),
+            _lien_mois(base, user, nom, sa, sm),
         )
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + f"<main><table class=grille><tr>{entetes}</tr>{''.join(lignes)}</table>"
         + _formulaire_import(base, user, nom, token)
         + "</main>"
-        f"<footer>{total} occurrence{'s' if total > 1 else ''} affichée"
-        f"{'s' if total > 1 else ''} · vue en lecture seule : "
-        "pour créer ou modifier un événement, utilisez votre client CalDAV.</footer>"
+        + _pied(total)
     )
     return _page(
         f"{titre_agenda} — {MOIS[mois - 1]} {annee}",
@@ -352,6 +462,123 @@ def rendre_mois(
         base,
         admin,
         connecte,
+    )
+
+
+def rendre_semaine(
+    config,
+    calendar_row,
+    user: str,
+    tz,
+    semaine: list[Jour],
+    aujourdhui: date,
+    admin: bool = False,
+    connecte: str = "",
+) -> Response:
+    base = config.base_path
+    nom = calendar_row["name"]
+    lundi, dimanche = semaine[0].jour, semaine[-1].jour
+
+    entetes = "".join(
+        f"<th{' class=today' if j.aujourdhui else ''}>{JOURS[n][:3]}"
+        f"<span class=date>{j.jour.day}</span></th>"
+        for n, j in enumerate(semaine)
+    )
+    cellules = []
+    for jour in semaine:
+        puces = "".join(_puce(o, base, user, nom, tz) for o in jour.evenements)
+        classe = " class=today" if jour.aujourdhui else ""
+        cellules.append(f"<td{classe}>{puces}</td>")
+    total = sum(len(j.evenements) for j in semaine)
+
+    if lundi.month == dimanche.month:
+        periode = f"du {lundi.day} au {dimanche.day} {MOIS[dimanche.month - 1]} {dimanche.year}"
+    else:
+        periode = (
+            f"du {lundi.day} {MOIS[lundi.month - 1]} au {dimanche.day} "
+            f"{MOIS[dimanche.month - 1]} {dimanche.year}"
+        )
+
+    def vers(jour: date) -> str:
+        return _lien_vue(base, user, nom, vue="semaine", d=jour.isoformat())
+
+    corps = (
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "semaine",
+            periode,
+            vers(lundi - timedelta(days=7)),
+            vers(aujourdhui),
+            vers(lundi + timedelta(days=7)),
+        )
+        + f"<main><table class='grille semaine'><tr>{entetes}</tr>"
+        f"<tr>{''.join(cellules)}</tr></table></main>"
+        + _pied(total)
+    )
+    titre_agenda = calendar_row["display_name"] or nom
+    return _page(f"{titre_agenda} — semaine {periode}", corps, base, admin, connecte)
+
+
+def rendre_liste(
+    config,
+    calendar_row,
+    user: str,
+    annee: int,
+    mois: int,
+    tz,
+    semaines: list[list[Jour]],
+    aujourdhui: date,
+    admin: bool = False,
+    connecte: str = "",
+) -> Response:
+    """Agenda view: the month's days that hold something, one line per event."""
+    base = config.base_path
+    nom = calendar_row["name"]
+    pa, pm = mois_precedent(annee, mois)
+    sa, sm = mois_suivant(annee, mois)
+
+    blocs = []
+    total = 0
+    for semaine in semaines:
+        for jour in semaine:
+            if not jour.dans_le_mois or not jour.evenements:
+                continue
+            total += len(jour.evenements)
+            lignes = "".join(
+                f"<li><span class=heure>{_horaire(o, tz)}</span>"
+                f"<a href='{base}/view/{quote(user)}/{quote(nom)}/{quote(o.href)}'>"
+                f"{escape(o.summary or '(sans titre)')}</a></li>"
+                for o in jour.evenements
+            )
+            classe = " class=today" if jour.aujourdhui else ""
+            blocs.append(
+                f"<h3{classe}>{JOURS[jour.jour.weekday()]} {jour.jour.day} "
+                f"{MOIS[jour.jour.month - 1]}</h3><ul>{lignes}</ul>"
+            )
+
+    def vers(a: int, m: int) -> str:
+        return _lien_vue(base, user, nom, vue="liste", m=f"{a:04d}-{m:02d}")
+
+    contenu = "".join(blocs) or "<p class=vide>Rien de prévu ce mois-ci.</p>"
+    corps = (
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "liste",
+            f"{MOIS[mois - 1]} {annee}",
+            vers(pa, pm),
+            vers(aujourdhui.year, aujourdhui.month),
+            vers(sa, sm),
+        )
+        + f"<main><section class=liste>{contenu}</section></main>"
+        + _pied(total)
+    )
+    titre_agenda = calendar_row["display_name"] or nom
+    return _page(
+        f"{titre_agenda} — {MOIS[mois - 1]} {annee}", corps, base, admin, connecte
     )
 
 
@@ -468,7 +695,14 @@ def rendre_index(
 
 
 def rendre_carnet(
-    db, config, carnet_row, user: str, admin: bool = False, connecte: str = ""
+    db,
+    config,
+    carnet_row,
+    user: str,
+    admin: bool = False,
+    connecte: str = "",
+    token: str = "",
+    message: str = "",
 ) -> Response:
     """List an address book's cards, sorted by display name."""
     base = config.base_path
@@ -500,19 +734,37 @@ def rendre_carnet(
             "</tr>"
         )
 
+    ici = f"{base}/view/contacts/{quote(user)}/{quote(nom)}/"
+    import_form = ""
+    if token:
+        import_form = (
+            "<details class=import><summary>Ajouter des contacts depuis un fichier "
+            ".vcf</summary>"
+            f"<form method=post action='{ici}import' enctype='multipart/form-data'>"
+            f"<input type=hidden name=csrf value='{escape(token)}'>"
+            "<input type=file name=fichier accept='.vcf,text/vcard' required>"
+            "<button>Importer</button></form>"
+            "<p class=muted>Un export de Google Contacts, de Thunderbird ou d'un "
+            "téléphone convient. Réimporter le même fichier met à jour les fiches "
+            "au lieu de les dupliquer.</p></details>"
+        )
     corps = (
         titre(
             "<span class=pastille style='background:"
             f"{escape(carnet_row['color'] or '#3584e4')}'></span>"
-            f"<h1>{escape(titre_carnet)}</h1>"
+            f"<h1>{escape(titre_carnet)}</h1>",
+            f"<a href='{ici}?export=vcf' download>Exporter (.vcf)</a>",
         )
+        + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + "<main><table class=grille style='table-layout:auto'>"
         "<tr><th>Nom</th><th>Courriel</th></tr>"
         + (
             "".join(lignes)
             or "<tr><td colspan=2 class=vide>Ce carnet est vide.</td></tr>"
         )
-        + "</table></main>"
+        + "</table>"
+        + import_form
+        + "</main>"
         f"<footer>{len(lignes)} contact{'s' if len(lignes) > 1 else ''} · "
         "vue en lecture seule : pour modifier une fiche, utilisez votre client "
         "CardDAV.</footer>"
@@ -690,6 +942,7 @@ def _importer(
         resource.calendar,
         brut.decode("utf-8", "replace"),
         max_taille=config.max_resource_size,
+        quota=config.quota_bytes,
     )
     message = rapport.resume()
     if rapport.erreurs:
@@ -766,6 +1019,7 @@ def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: st
         db.get_calendar_by_id(calendar_id),
         fichier.decode("utf-8", "replace"),
         max_taille=config.max_resource_size,
+        quota=config.quota_bytes,
     )
     if rapport.total == 0:
         # An empty calendar left behind by a failed import has no reason to
@@ -798,6 +1052,58 @@ def _supprimer_agenda(
     )
 
 
+def _telechargement(contenu: str, type_mime: str, nom: str) -> Response:
+    """Serve an export as a file to save, named after the collection."""
+    corps = contenu.encode("utf-8")
+    sur = "".join(c if c.isalnum() or c in "._-" else "_" for c in nom) or "export"
+    return Response(
+        200,
+        corps,
+        [
+            ("Content-Type", f"{type_mime}; charset=utf-8"),
+            ("Content-Length", str(len(corps))),
+            ("Content-Disposition", f'attachment; filename="{sur}"'),
+            # A snapshot of private data: no shared cache should keep it.
+            ("Cache-Control", "private, no-store"),
+        ],
+    )
+
+
+def _importer_contacts(
+    db, config, request: Request, user_row, admin: bool, segments: list[str]
+) -> Response:
+    """Receive an uploaded .vcf into one of the account's address books."""
+    resource = resolve(db, ["addressbooks", *segments], "/" + "/".join(segments))
+    if resource.kind != Kind.CALENDAR or resource.calendar is None:
+        return error(404, "Carnet introuvable.")
+    if not admin and resource.user["id"] != user_row["id"]:
+        return error(403, "Ce carnet ne vous appartient pas.")
+
+    champs, fichier = _champs_formulaire(request)
+    if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
+        return error(403, "Jeton CSRF invalide.")
+
+    cible = f"{config.base_path}/view/contacts/{quote(segments[0])}/{quote(segments[1])}/"
+    if not fichier:
+        message = "Aucun fichier reçu."
+    else:
+        rapport = importer_cartes(
+            db,
+            resource.calendar,
+            fichier.decode("utf-8", "replace"),
+            max_taille=config.max_resource_size,
+            quota=config.quota_bytes,
+        )
+        message = rapport.resume()
+        if rapport.erreurs:
+            apercu = " ".join(rapport.erreurs[:3])
+            reste = len(rapport.erreurs) - 3
+            message += f" ({apercu}" + (f" … +{reste}" if reste > 0 else "") + ")"
+    return Response(
+        303, b"", [("Location", f"{cible}?msg={quote(message)}"), ("Content-Length", "0")]
+    )
+
+
 def _rediriger_index(config, message: str) -> Response:
     cible = f"{config.base_path}/view/?msg={quote(message)}"
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
@@ -811,7 +1117,9 @@ def _rediriger(config, segments: list[str], message: str) -> Response:
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
 
 
-def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Response:
+def _vue_contacts(
+    db, config, request: Request, user_row, admin: bool, segments: list[str], token: str = ""
+) -> Response:
     """Routing under `/view/contacts/`: address book, then card."""
     if len(segments) < 2:
         return error(404, "Carnet introuvable.")
@@ -831,9 +1139,15 @@ def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Res
             admin,
             user_row["username"],
         )
+    if request.query_param("export"):
+        return _telechargement(
+            export_addressbook(db, resource.calendar),
+            "text/vcard",
+            f"{resource.calendar['name']}.vcf",
+        )
     return rendre_carnet(
         db, config, resource.calendar, resource.user["username"], admin,
-        user_row["username"],
+        user_row["username"], token, request.query_param("msg"),
     )
 
 
@@ -845,9 +1159,22 @@ def handle_view(
     admin = bool(user_row["is_admin"])
     tz = None  # None = fuseau local du serveur (variable TZ du conteneur)
 
-    # Three actions write: import, calendar creation and calendar deletion.
+    # One segment never named anything else (a calendar needs two), so the
+    # account page cannot shadow a user called "compte".
+    if segments == ["compte"]:
+        return handle_account(db, config, request, token)
+
+    # Writes, all behind the CSRF token: .ics and .vcf import, calendar
+    # creation and deletion, and app passwords on the account page above.
     # Everything else in this view is read-only.
     if request.method == "POST":
+        if (
+            len(segments) == 4
+            and segments[0] == "contacts"
+            and segments[3] == "import"
+            and db.get_user(segments[1]) is not None
+        ):
+            return _importer_contacts(db, config, request, user_row, admin, segments[1:3])
         if len(segments) == 3 and segments[2] == "import":
             return _importer(db, config, request, user_row, admin, segments[:2], token)
         if segments == ["agendas", "creer"]:
@@ -873,7 +1200,7 @@ def handle_view(
     # when the next segment names a user, otherwise /view/contacts/<calendar>/
     # would stop reaching that account's calendars.
     if segments[0] == "contacts" and len(segments) > 1 and db.get_user(segments[1]) is not None:
-        return _vue_contacts(db, config, user_row, admin, segments[1:])
+        return _vue_contacts(db, config, request, user_row, admin, segments[1:], token)
 
     if len(segments) < 2:
         return error(404, "Agenda introuvable.")
@@ -895,10 +1222,45 @@ def handle_view(
             user_row["username"],
         )
 
+    if request.query_param("export"):
+        return _telechargement(
+            export_calendar(db, resource.calendar),
+            "text/calendar",
+            f"{resource.calendar['name']}.ics",
+        )
+
     aujourdhui = datetime.now(tz).date() if tz else datetime.now().date()
+    vue = request.query_param("vue")
+    if vue == "semaine":
+        semaines = semaine_de(parse_jour(request.query_param("d"), aujourdhui), aujourdhui)
+        remplir(db, resource.calendar, semaines, tz)
+        return rendre_semaine(
+            config,
+            resource.calendar,
+            resource.user["username"],
+            tz,
+            semaines[0],
+            aujourdhui,
+            admin,
+            user_row["username"],
+        )
+
     annee, mois = parse_mois(request.query_param("m"), aujourdhui)
     semaines = grille(annee, mois, aujourdhui)
     remplir(db, resource.calendar, semaines, tz)
+    if vue == "liste":
+        return rendre_liste(
+            config,
+            resource.calendar,
+            resource.user["username"],
+            annee,
+            mois,
+            tz,
+            semaines,
+            aujourdhui,
+            admin,
+            user_row["username"],
+        )
     return rendre_mois(
         config,
         resource.calendar,

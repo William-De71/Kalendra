@@ -68,6 +68,7 @@ class ASGIApplication:
                 for key, value in scope.get("headers", [])
             },
             body=bytes(body),
+            remote_addr=(scope.get("client") or ("",))[0] or "",
         )
 
         loop = asyncio.get_running_loop()

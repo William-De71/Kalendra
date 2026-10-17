@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
@@ -25,6 +26,7 @@ STATUS_TEXT = {
     413: "Payload Too Large",
     415: "Unsupported Media Type",
     422: "Unprocessable Entity",
+    429: "Too Many Requests",
     500: "Internal Server Error",
     501: "Not Implemented",
     507: "Insufficient Storage",
@@ -39,6 +41,11 @@ class Request:
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
     user: Any = None
+    #: Peer address as the transport saw it; behind a reverse proxy, that is
+    #: the proxy. `client_ip()` in app.py decides whether to look further.
+    remote_addr: str = ""
+    #: Authenticated with an app password rather than the account password.
+    via_app_password: bool = False
 
     def header(self, name: str, default: str = "") -> str:
         return self.headers.get(name.lower(), default)
@@ -73,6 +80,21 @@ class Response:
     @property
     def reason(self) -> str:
         return STATUS_TEXT.get(self.status, "Unknown")
+
+
+_CONTROLE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def for_log(value: object) -> str:
+    """Neutralise control characters before a client-supplied value is logged.
+
+    A request path, a username or an X-Forwarded-For header is chosen by the
+    client: a CR/LF in it would forge a whole log line ("log injection"). They
+    are written as escapes instead, so the line stays one line and the
+    original bytes remain readable.
+    """
+    texte = str(value).replace("\r", "\\r").replace("\n", "\\n")
+    return _CONTROLE.sub(lambda m: f"\\x{ord(m.group()):02x}", texte)
 
 
 def text_response(

@@ -11,8 +11,8 @@ Python.
   d'adresses vivent sous `/addressbooks/<compte>/<carnet>/`.
 - **Flux ICS en lecture seule** pour Google Calendar et Proton Calendar, qui
   ne savent pas parler CalDAV à un serveur tiers (voir plus bas).
-- **Une seule image, un seul fichier de données.** Sauvegarder son agenda,
-  c'est copier `kalendra.db`.
+- **Une seule image, un seul fichier de données.** Sauvegarder ses agendas,
+  c'est une commande : `kalendra backup`.
 
 ---
 
@@ -143,6 +143,13 @@ PYTHONPATH=src KALENDRA_DB=./kalendra.db python -m kalendra serve
 
 ## Raccorder les clients
 
+Le plus simple : ouvrez **`/view/compte/`** (« Mon compte » dans la barre
+latérale). La page affiche les adresses exactes à saisir pour votre compte,
+les étapes pour chaque client ci-dessous, un **profil de configuration Apple**
+à télécharger, et permet de créer des **mots de passe d'application** — un par
+appareil, révocable seul si l'appareil est perdu, et qui n'ouvre que la
+synchronisation, jamais l'interface web.
+
 ### GNOME Evolution (Fedora)
 
 `Nouveau → Calendrier → Type : CalDAV`, puis :
@@ -168,9 +175,13 @@ Android natif.
 
 ### iOS / macOS
 
-`Réglages → Applications → Calendrier → Comptes → Ajouter un compte → Autre →
-Compte CalDAV`. Serveur : `cal.example.org`. **TLS est obligatoire** côté
-Apple : passez par un reverse proxy HTTPS.
+Téléchargez le profil depuis `/view/compte/` (« Télécharger le profil ») et
+installez-le : il crée d'un coup le compte d'agendas et le compte de contacts,
+seul le mot de passe est demandé — donnez-lui un mot de passe d'application.
+
+À la main : `Réglages → Applications → Calendrier → Comptes → Ajouter un
+compte → Autre → Compte CalDAV`. Serveur : `cal.example.org`. **TLS est
+obligatoire** côté Apple : passez par un reverse proxy HTTPS.
 
 ### Google Calendar (lecture seule)
 
@@ -202,12 +213,25 @@ entières sur toute leur durée. Un clic sur un événement ouvre son détail, y
 compris sa source iCalendar brute. Les mois se parcourent par les liens
 « précédent » et « suivant », ou directement par `?m=2026-03`.
 
+Deux autres vues se choisissent dans la barre de titre : **Semaine**
+(`?vue=semaine&d=2026-03-16`), qui liste tous les événements de chaque jour
+au lieu de les replier en « +N autres », et **Liste** (`?vue=liste&m=2026-03`),
+une ligne par événement avec ses horaires, pour les jours du mois qui ont
+quelque chose.
+
 `/view/contacts/<utilisateur>/<carnet>/` fait de même pour un carnet
 d'adresses : la liste des fiches triée par nom, puis le détail d'un contact
 (courriels, téléphones, adresses, organisation) et sa source vCard brute.
 
-C'est une **vue, pas un éditeur** : aucune écriture n'est possible depuis ces
-pages. Créer et modifier des événements reste le travail de votre client
+**Exporter** : chaque agenda se télécharge en un `.ics` (`?export=ics`) et
+chaque carnet en un `.vcf` (`?export=vcf`), objets recopiés tels quels — de
+quoi déménager vers un autre serveur, ou garder une copie d'un seul agenda.
+Un carnet accepte aussi un `.vcf` **importé** (export de Google Contacts, de
+Thunderbird, d'un téléphone) : une fiche par carte, et un réimport met à jour
+au lieu de dupliquer.
+
+C'est une **vue, pas un éditeur** : aucun événement ni contact ne se modifie
+depuis ces pages. Créer et modifier des événements reste le travail de votre client
 CalDAV, qui le fait mieux — fuseaux, récurrences avec exceptions, participants
 et rappels sont exactement là où un éditeur maison accumulerait les bugs, avec
 le risque de perdre des propriétés en réécrivant un objet.
@@ -260,6 +284,41 @@ Pour servir Kalendra dans un sous-chemin (`https://exemple.org/cal/`),
 positionnez `KALENDRA_BASE_PATH=/cal` : toutes les URLs générées dans les
 réponses XML en tiendront compte.
 
+Derrière un proxy, positionnez aussi **`KALENDRA_TRUST_PROXY=true`** (et
+seulement dans ce cas) : sans lui, toutes les requêtes semblent venir du proxy,
+et le freinage des connexions décrit ci-dessous bloquerait tout le monde à la
+fois.
+
+### Connexions et journal
+
+Après `KALENDRA_AUTH_MAX_FAILURES` échecs d'authentification (10 par défaut)
+en `KALENDRA_AUTH_LOCKOUT` secondes (300), une adresse reçoit `429 Too Many
+Requests` pendant ce même délai, sans même que le mot de passe soit vérifié.
+Le compteur porte sur l'adresse et jamais sur le compte : sinon n'importe qui
+pourrait bloquer un utilisateur dont il connaît le nom. Les identifiants déjà
+validés depuis moins d'une minute passent malgré le blocage, si bien qu'un
+membre de la famille derrière la même box qu'un attaquant continue de
+synchroniser.
+
+Chaque requête produit une ligne de journal `clé=valeur`, lisible telle quelle
+et analysable sans configuration par Loki, Vector ou `jq -R` :
+
+```
+ip=203.0.113.7 method=REPORT path=/calendars/alice/perso/ status=207 ms=4.2 user=alice
+```
+
+Le jeton des flux publics n'y figure jamais (`path=/feed/…`) : c'est leur seul
+secret. Les sondes `/health` passent au niveau `debug`, et
+`KALENDRA_ACCESS_LOG=false` coupe le journal.
+
+### Quota
+
+`KALENDRA_QUOTA_BYTES` limite l'espace d'un compte, agendas et carnets
+confondus (`0`, la valeur par défaut, laisse illimité). Un `PUT` qui le
+dépasserait reçoit `507` avec la précondition `DAV:quota-not-exceeded` de la
+RFC 4331, et les collections annoncent `quota-available-bytes`. L'espace
+utilisé figure sur la page « Mon compte ».
+
 ### Importer un calendrier public (vacances scolaires, jours fériés…)
 
 Kalendra n'a **aucun client HTTP sortant** : il ne va jamais chercher un
@@ -307,13 +366,21 @@ Google ou Proton via son flux `/feed/<jeton>.ics`.
 ### Sauvegarde
 
 ```sh
-docker exec kalendra python -c \
-  "import sqlite3; src=sqlite3.connect('/data/kalendra.db'); \
-   dst=sqlite3.connect('/data/backup.db'); src.backup(dst); dst.close()"
+docker exec kalendra python -m kalendra backup /data/sauvegardes/
 ```
 
-`sqlite3.backup()` produit une copie cohérente même pendant une écriture, ce
-que `cp` ne garantit pas en mode WAL.
+La commande produit une copie cohérente **serveur en marche**, ce que `cp` ne
+garantit pas : en mode WAL, les dernières écritures vivent encore dans
+`kalendra.db-wal`, et une copie prise au mauvais moment sort déchirée.
+`kalendra backup` passe par l'API de sauvegarde de SQLite, vérifie l'intégrité
+du résultat et produit un fichier autonome, sans `-wal` à côté. Donnée un
+dossier, elle nomme le fichier `kalendra-AAAAMMJJ-HHMMSS.db` — de quoi la
+lancer chaque nuit depuis un `cron` ; `--compact` (`VACUUM INTO`) donne un
+fichier plus petit, au prix d'un peu plus de temps. Restaurer, c'est arrêter le
+conteneur et remettre ce fichier à la place de `kalendra.db`.
+
+Pour un seul agenda ou un seul carnet : `kalendra calendar export` et
+`kalendra addressbook export` (voir la ligne de commande).
 
 ---
 
@@ -336,6 +403,11 @@ Tout passe par l'environnement.
 | `KALENDRA_MAX_RESOURCE_SIZE` | `1048576` | Taille max d'un objet en `PUT` |
 | `KALENDRA_MAX_REQUEST_BODY` | `8388608` | Taille max d'un corps de requête |
 | `KALENDRA_AUTH_CACHE_TTL` | `60` | Cache des identifiants validés (s), `0` désactive |
+| `KALENDRA_AUTH_MAX_FAILURES` | `10` | Échecs de connexion tolérés par adresse, `0` désactive le freinage |
+| `KALENDRA_AUTH_LOCKOUT` | `300` | Fenêtre de comptage et durée du blocage (s) |
+| `KALENDRA_TRUST_PROXY` | `false` | Lit l'adresse du client dans `X-Forwarded-For` (derrière un proxy uniquement) |
+| `KALENDRA_QUOTA_BYTES` | `0` | Espace par compte en octets, `0` = illimité |
+| `KALENDRA_ACCESS_LOG` | `true` | Une ligne de journal par requête |
 | `KALENDRA_LOG_LEVEL` | `info` | `debug`, `info`, `warning`, `error` |
 
 ---
@@ -349,9 +421,17 @@ kalendra user passwd admin
 kalendra calendar add admin astreinte --display-name "Astreinte" --color '#e01b24'
 kalendra calendar list
 kalendra calendar token admin perso     # régénère le jeton du flux ICS
+kalendra calendar export admin perso -o perso.ics
+kalendra calendar import admin vacances Zone-B.ics
 kalendra addressbook add admin contacts --display-name "Contacts"
 kalendra addressbook list
+kalendra addressbook export admin contacts -o contacts.vcf
+kalendra addressbook import admin contacts google-contacts.vcf
 kalendra addressbook rm admin contacts
+kalendra app-password add admin "téléphone"   # affiche le secret une seule fois
+kalendra app-password list admin
+kalendra app-password rm admin 3
+kalendra backup /data/sauvegardes/            # ou un nom de fichier ; --compact
 kalendra serve --host 0.0.0.0 --port 5232
 ```
 
@@ -370,8 +450,12 @@ Dans un conteneur : `docker exec -it kalendra python -m kalendra user list`.
 `supported-calendar-component-set`, `supported-report-set`,
 `current-user-privilege-set`), rapports `calendar-query` (filtres de
 composant, `time-range`, `prop-filter`/`text-match`), `calendar-multiget` et
-`free-busy-query`, préconditions `valid-calendar-data`, `no-uid-conflict`,
+`free-busy-query`, options `<C:expand>` et `<C:limit-recurrence-set>` de
+`calendar-data`, préconditions `valid-calendar-data`, `no-uid-conflict`,
 `supported-calendar-component`.
+
+**RFC 4331 (quotas)** — `quota-used-bytes`, `quota-available-bytes` et la
+précondition `quota-not-exceeded`.
 
 **RFC 6578 (synchronisation)** — `sync-collection` avec jetons opaques
 monotones, suppressions signalées en `404`, plus le `getctag` d'Apple pour les
@@ -381,8 +465,11 @@ clients plus anciens.
 paramètres entre guillemets, échappement TEXT), `DATE` / `DATE-TIME` /
 `DURATION`, résolution des `TZID` via la base système (y compris les noms
 Microsoft courants), expansion des récurrences `FREQ`, `INTERVAL`, `COUNT`,
-`UNTIL`, `BYDAY` (avec ordinal), `BYMONTHDAY`, `BYMONTH`, `BYHOUR`,
-`BYMINUTE`, `BYSETPOS`, `WKST`, ainsi que `EXDATE` et `RDATE`.
+`UNTIL`, `BYDAY` (avec ordinal), `BYMONTHDAY`, `BYMONTH`, `BYWEEKNO`,
+`BYYEARDAY`, `BYHOUR`, `BYMINUTE`, `BYSETPOS`, `WKST`, ainsi que `EXDATE`,
+`RDATE` et les exceptions `RECURRENCE-ID`. Les règles sont développées dans le
+fuseau de leur `DTSTART`, si bien qu'une réunion hebdomadaire à 10 h reste à
+10 h de part et d'autre du changement d'heure.
 
 ### Limites assumées
 
@@ -394,9 +481,11 @@ Microsoft courants), expansion des récurrences `FREQ`, `INTERVAL`, `COUNT`,
 - Pas de `LOCK` / `UNLOCK` : les ETags suffisent à détecter les conflits, et
   aucun client CalDAV courant n'exige le verrouillage.
 - `MOVE` et `COPY` ne sont pas implémentés (les clients ré-écrivent l'objet).
-- `BYYEARDAY` et `BYWEEKNO` ne sont pas expansés : ces événements sont alors
-  considérés comme candidats à toute plage horaire, donc renvoyés au client
-  qui filtrera lui-même. On préfère un événement en trop à un événement perdu.
+- Une règle de récurrence hors du sous-ensemble géré (un `BYDAY` ordinal
+  combiné à `BYWEEKNO`, une valeur hors des bornes de la RFC) n'est pas
+  développée : l'événement est alors considéré comme candidat à toute plage
+  horaire, donc renvoyé au client qui filtrera lui-même. On préfère un
+  événement en trop à un événement perdu.
 - Les partages entre utilisateurs ne sont pas gérés : chaque agenda appartient
   à un compte (un administrateur voit tout).
 
@@ -410,10 +499,19 @@ Aucune dépendance à installer pour lancer la suite :
 python -m unittest discover -s tests -t tests -v
 ```
 
-Plus de cent tests couvrent l'analyseur iCalendar, l'expansion des
+Plus de trois cents tests couvrent l'analyseur iCalendar, l'expansion des
 récurrences, le protocole CalDAV, les flux ICS, l'interface d'administration,
 la CLI, et un serveur HTTP réellement démarré (pour vérifier que `PROPFIND`,
 `REPORT` et `MKCALENDAR` traversent bien le socket).
+
+`tests/test_fuzz.py` soumet en plus aux analyseurs des objets mutés au hasard
+(graine fixe, donc reproductible) et vérifie qu'aucun ne provoque d'erreur 500.
+Pour chercher plus loin en local :
+
+```sh
+KALENDRA_FUZZ_ROUNDS=20000 KALENDRA_FUZZ_SEED=7 \
+  python -m unittest discover -s tests -t tests -p test_fuzz.py
+```
 
 Analyse statique :
 
@@ -428,7 +526,9 @@ aussi bien contre un conteneur local que contre votre déploiement réel) :
 ./scripts/verify-deployment.sh http://127.0.0.1:5232 admin motdepasse
 ```
 
-Validation avec un vrai client tiers (nécessite `pip install caldav`) :
+Validation avec un vrai client tiers (nécessite `pip install caldav`, qui
+apporte aussi `icalendar`, avec lequel `tests/integration/test_feed_consumer.py`
+relit les flux publics comme le ferait Google) :
 
 ```sh
 KALENDRA_TEST_URL=http://127.0.0.1:5232 \
