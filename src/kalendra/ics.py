@@ -867,7 +867,7 @@ def build_feed(
     description: str,
     color: str,
     objects: list[str],
-    refresh_minutes: int,
+    refresh_minutes: int | None,
     prodid: str,
 ) -> str:
     """Aggregate CalDAV resources into a single publishable VCALENDAR.
@@ -875,7 +875,6 @@ def build_feed(
     Components are copied line by line from the original resource: no property
     is lost, and VTIMEZONE blocks are de-duplicated by TZID.
     """
-    interval = max(5, int(refresh_minutes))
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -883,9 +882,12 @@ def build_feed(
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         fold(f"X-WR-CALNAME:{escape_text(name)}"),
-        f"REFRESH-INTERVAL;VALUE=DURATION:PT{interval}M",
-        f"X-PUBLISHED-TTL:PT{interval}M",
     ]
+    # None for a one-off export: a downloaded file is not refreshed by anyone.
+    if refresh_minutes is not None:
+        interval = max(5, int(refresh_minutes))
+        lines.append(f"REFRESH-INTERVAL;VALUE=DURATION:PT{interval}M")
+        lines.append(f"X-PUBLISHED-TTL:PT{interval}M")
     if description:
         lines.append(fold(f"X-WR-CALDESC:{escape_text(description)}"))
     if color:

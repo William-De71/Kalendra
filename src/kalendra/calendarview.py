@@ -19,6 +19,7 @@ from html import escape
 from urllib.parse import parse_qs, quote
 
 from . import __version__
+from .export import export_addressbook, export_calendar
 from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
     Occurrence,
@@ -29,6 +30,7 @@ from .ics import (
     to_unix,
 )
 from .importics import importer
+from .importvcf import importer_cartes
 from .resources import Kind, resolve
 from .security import csrf_valid
 from .vcard import InvalidCardData, parse_vcard
@@ -336,7 +338,9 @@ def rendre_mois(
             f"<a href='{_lien_mois(base, user, nom, pa, pm)}'>←</a>"
             f"<a href='{_lien_mois(base, user, nom, aujourdhui.year, aujourdhui.month)}'>"
             "aujourd'hui</a>"
-            f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>→</a>",
+            f"<a href='{_lien_mois(base, user, nom, sa, sm)}'>→</a>"
+            f"<a href='{base}/view/{quote(user)}/{quote(nom)}/?export=ics' download>"
+            "Exporter (.ics)</a>",
         )
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + f"<main><table class=grille><tr>{entetes}</tr>{''.join(lignes)}</table>"
@@ -468,7 +472,14 @@ def rendre_index(
 
 
 def rendre_carnet(
-    db, config, carnet_row, user: str, admin: bool = False, connecte: str = ""
+    db,
+    config,
+    carnet_row,
+    user: str,
+    admin: bool = False,
+    connecte: str = "",
+    token: str = "",
+    message: str = "",
 ) -> Response:
     """List an address book's cards, sorted by display name."""
     base = config.base_path
@@ -500,19 +511,37 @@ def rendre_carnet(
             "</tr>"
         )
 
+    ici = f"{base}/view/contacts/{quote(user)}/{quote(nom)}/"
+    import_form = ""
+    if token:
+        import_form = (
+            "<details class=import><summary>Ajouter des contacts depuis un fichier "
+            ".vcf</summary>"
+            f"<form method=post action='{ici}import' enctype='multipart/form-data'>"
+            f"<input type=hidden name=csrf value='{escape(token)}'>"
+            "<input type=file name=fichier accept='.vcf,text/vcard' required>"
+            "<button>Importer</button></form>"
+            "<p class=muted>Un export de Google Contacts, de Thunderbird ou d'un "
+            "téléphone convient. Réimporter le même fichier met à jour les fiches "
+            "au lieu de les dupliquer.</p></details>"
+        )
     corps = (
         titre(
             "<span class=pastille style='background:"
             f"{escape(carnet_row['color'] or '#3584e4')}'></span>"
-            f"<h1>{escape(titre_carnet)}</h1>"
+            f"<h1>{escape(titre_carnet)}</h1>",
+            f"<a href='{ici}?export=vcf' download>Exporter (.vcf)</a>",
         )
+        + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + "<main><table class=grille style='table-layout:auto'>"
         "<tr><th>Nom</th><th>Courriel</th></tr>"
         + (
             "".join(lignes)
             or "<tr><td colspan=2 class=vide>Ce carnet est vide.</td></tr>"
         )
-        + "</table></main>"
+        + "</table>"
+        + import_form
+        + "</main>"
         f"<footer>{len(lignes)} contact{'s' if len(lignes) > 1 else ''} · "
         "vue en lecture seule : pour modifier une fiche, utilisez votre client "
         "CardDAV.</footer>"
@@ -800,6 +829,58 @@ def _supprimer_agenda(
     )
 
 
+def _telechargement(contenu: str, type_mime: str, nom: str) -> Response:
+    """Serve an export as a file to save, named after the collection."""
+    corps = contenu.encode("utf-8")
+    sur = "".join(c if c.isalnum() or c in "._-" else "_" for c in nom) or "export"
+    return Response(
+        200,
+        corps,
+        [
+            ("Content-Type", f"{type_mime}; charset=utf-8"),
+            ("Content-Length", str(len(corps))),
+            ("Content-Disposition", f'attachment; filename="{sur}"'),
+            # A snapshot of private data: no shared cache should keep it.
+            ("Cache-Control", "private, no-store"),
+        ],
+    )
+
+
+def _importer_contacts(
+    db, config, request: Request, user_row, admin: bool, segments: list[str]
+) -> Response:
+    """Receive an uploaded .vcf into one of the account's address books."""
+    resource = resolve(db, ["addressbooks", *segments], "/" + "/".join(segments))
+    if resource.kind != Kind.CALENDAR or resource.calendar is None:
+        return error(404, "Carnet introuvable.")
+    if not admin and resource.user["id"] != user_row["id"]:
+        return error(403, "Ce carnet ne vous appartient pas.")
+
+    champs, fichier = _champs_formulaire(request)
+    if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
+        return error(403, "Jeton CSRF invalide.")
+
+    cible = f"{config.base_path}/view/contacts/{quote(segments[0])}/{quote(segments[1])}/"
+    if not fichier:
+        message = "Aucun fichier reçu."
+    else:
+        rapport = importer_cartes(
+            db,
+            resource.calendar,
+            fichier.decode("utf-8", "replace"),
+            max_taille=config.max_resource_size,
+            quota=config.quota_bytes,
+        )
+        message = rapport.resume()
+        if rapport.erreurs:
+            apercu = " ".join(rapport.erreurs[:3])
+            reste = len(rapport.erreurs) - 3
+            message += f" ({apercu}" + (f" … +{reste}" if reste > 0 else "") + ")"
+    return Response(
+        303, b"", [("Location", f"{cible}?msg={quote(message)}"), ("Content-Length", "0")]
+    )
+
+
 def _rediriger_index(config, message: str) -> Response:
     cible = f"{config.base_path}/view/?msg={quote(message)}"
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
@@ -813,7 +894,9 @@ def _rediriger(config, segments: list[str], message: str) -> Response:
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
 
 
-def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Response:
+def _vue_contacts(
+    db, config, request: Request, user_row, admin: bool, segments: list[str], token: str = ""
+) -> Response:
     """Routing under `/view/contacts/`: address book, then card."""
     if len(segments) < 2:
         return error(404, "Carnet introuvable.")
@@ -833,9 +916,15 @@ def _vue_contacts(db, config, user_row, admin: bool, segments: list[str]) -> Res
             admin,
             user_row["username"],
         )
+    if request.query_param("export"):
+        return _telechargement(
+            export_addressbook(db, resource.calendar),
+            "text/vcard",
+            f"{resource.calendar['name']}.vcf",
+        )
     return rendre_carnet(
         db, config, resource.calendar, resource.user["username"], admin,
-        user_row["username"],
+        user_row["username"], token, request.query_param("msg"),
     )
 
 
@@ -850,6 +939,13 @@ def handle_view(
     # Three actions write: import, calendar creation and calendar deletion.
     # Everything else in this view is read-only.
     if request.method == "POST":
+        if (
+            len(segments) == 4
+            and segments[0] == "contacts"
+            and segments[3] == "import"
+            and db.get_user(segments[1]) is not None
+        ):
+            return _importer_contacts(db, config, request, user_row, admin, segments[1:3])
         if len(segments) == 3 and segments[2] == "import":
             return _importer(db, config, request, user_row, admin, segments[:2], token)
         if segments == ["agendas", "creer"]:
@@ -875,7 +971,7 @@ def handle_view(
     # when the next segment names a user, otherwise /view/contacts/<calendar>/
     # would stop reaching that account's calendars.
     if segments[0] == "contacts" and len(segments) > 1 and db.get_user(segments[1]) is not None:
-        return _vue_contacts(db, config, user_row, admin, segments[1:])
+        return _vue_contacts(db, config, request, user_row, admin, segments[1:], token)
 
     if len(segments) < 2:
         return error(404, "Agenda introuvable.")
@@ -895,6 +991,13 @@ def handle_view(
             tz,
             admin,
             user_row["username"],
+        )
+
+    if request.query_param("export"):
+        return _telechargement(
+            export_calendar(db, resource.calendar),
+            "text/calendar",
+            f"{resource.calendar['name']}.ics",
         )
 
     aujourdhui = datetime.now(tz).date() if tz else datetime.now().date()

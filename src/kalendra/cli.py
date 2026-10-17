@@ -213,6 +213,81 @@ def cmd_calendar_token(args) -> int:
     return 0
 
 
+def _write_or_print(text: str, output: str | None) -> None:
+    if output:
+        with open(output, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        print(f"Écrit : {output}", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+
+
+def _collection_or_exit(db, username: str, name: str, kind: str):
+    user = _user_or_exit(db, username)
+    row = db.get_calendar(user["id"], name, kind)
+    if row is None:
+        quoi = "Carnet" if kind == "addressbook" else "Agenda"
+        raise SystemExit(f"{quoi} inconnu : {name}")
+    return row
+
+
+def _import_report(rapport) -> int:
+    print(rapport.resume())
+    for erreur in rapport.erreurs:
+        print(f"  {erreur}", file=sys.stderr)
+    return 0 if rapport.total or not rapport.erreurs else 1
+
+
+def cmd_calendar_export(args) -> int:
+    from .export import export_calendar
+
+    db = _database(args)
+    _write_or_print(
+        export_calendar(db, _collection_or_exit(db, args.username, args.name, "calendar")),
+        args.output,
+    )
+    return 0
+
+
+def cmd_calendar_import(args) -> int:
+    from .importics import importer
+
+    db = _database(args)
+    calendar = _collection_or_exit(db, args.username, args.name, "calendar")
+    config = Config.from_env()
+    with open(args.file, encoding="utf-8", errors="replace") as handle:
+        rapport = importer(
+            db, calendar, handle.read(), max_taille=config.max_resource_size,
+            quota=config.quota_bytes,
+        )
+    return _import_report(rapport)
+
+
+def cmd_addressbook_export(args) -> int:
+    from .export import export_addressbook
+
+    db = _database(args)
+    _write_or_print(
+        export_addressbook(db, _collection_or_exit(db, args.username, args.name, "addressbook")),
+        args.output,
+    )
+    return 0
+
+
+def cmd_addressbook_import(args) -> int:
+    from .importvcf import importer_cartes
+
+    db = _database(args)
+    carnet = _collection_or_exit(db, args.username, args.name, "addressbook")
+    config = Config.from_env()
+    with open(args.file, encoding="utf-8", errors="replace") as handle:
+        rapport = importer_cartes(
+            db, carnet, handle.read(), max_taille=config.max_resource_size,
+            quota=config.quota_bytes,
+        )
+    return _import_report(rapport)
+
+
 def cmd_calendar_rm(args) -> int:
     db = _database(args)
     user = db.get_user(args.username)
@@ -350,6 +425,18 @@ def build_parser() -> argparse.ArgumentParser:
     cal_token.add_argument("name")
     cal_token.set_defaults(func=cmd_calendar_token)
 
+    cal_export = calendar.add_parser("export", help="écrit l'agenda dans un .ics")
+    cal_export.add_argument("username")
+    cal_export.add_argument("name")
+    cal_export.add_argument("-o", "--output", help="fichier (défaut : sortie standard)")
+    cal_export.set_defaults(func=cmd_calendar_export)
+
+    cal_import = calendar.add_parser("import", help="verse un .ics dans l'agenda")
+    cal_import.add_argument("username")
+    cal_import.add_argument("name")
+    cal_import.add_argument("file")
+    cal_import.set_defaults(func=cmd_calendar_import)
+
     cal_rm = calendar.add_parser("rm")
     cal_rm.add_argument("username")
     cal_rm.add_argument("name")
@@ -368,6 +455,18 @@ def build_parser() -> argparse.ArgumentParser:
     ab_add.set_defaults(func=cmd_addressbook_add)
 
     carnet.add_parser("list").set_defaults(func=cmd_addressbook_list)
+
+    ab_export = carnet.add_parser("export", help="écrit le carnet dans un .vcf")
+    ab_export.add_argument("username")
+    ab_export.add_argument("name")
+    ab_export.add_argument("-o", "--output", help="fichier (défaut : sortie standard)")
+    ab_export.set_defaults(func=cmd_addressbook_export)
+
+    ab_import = carnet.add_parser("import", help="verse un .vcf dans le carnet")
+    ab_import.add_argument("username")
+    ab_import.add_argument("name")
+    ab_import.add_argument("file")
+    ab_import.set_defaults(func=cmd_addressbook_import)
 
     ab_rm = carnet.add_parser("rm")
     ab_rm.add_argument("username")

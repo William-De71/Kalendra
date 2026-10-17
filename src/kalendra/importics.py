@@ -32,6 +32,8 @@ class Rapport:
     remplaces: int = 0
     ignores: int = 0
     erreurs: list[str] = None  # type: ignore[assignment]
+    #: What is being counted, for the summary shown to the user.
+    unite: str = "événement"
 
     def __post_init__(self) -> None:
         if self.erreurs is None:
@@ -44,13 +46,13 @@ class Rapport:
     def resume(self) -> str:
         morceaux = []
         if self.crees:
-            morceaux.append(f"{self.crees} événement(s) ajouté(s)")
+            morceaux.append(f"{self.crees} {self.unite}(s) ajouté(s)")
         if self.remplaces:
             morceaux.append(f"{self.remplaces} mis à jour")
         if self.ignores:
             morceaux.append(f"{self.ignores} ignoré(s)")
         if not morceaux:
-            return "Aucun événement importé."
+            return f"Aucun {self.unite} importé."
         return ", ".join(morceaux) + "."
 
 
