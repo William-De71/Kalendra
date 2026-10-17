@@ -574,6 +574,15 @@ class Database:
             )
         }
 
+    def account_usage(self, user_id: int) -> int:
+        """Bytes stored by an account, calendars and address books together."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(o.size), 0) AS n FROM objects o"
+            " JOIN calendars c ON c.id = o.calendar_id WHERE c.user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["n"])
+
     def calendar_stats(self, calendar_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS n FROM objects WHERE calendar_id = ?", (calendar_id,)

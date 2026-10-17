@@ -373,6 +373,20 @@ class DavHandler:
 
         data = request.body.decode("utf-8", "replace")
 
+        quota = self.config.quota_bytes
+        if quota > 0:
+            # Charged to the collection's owner, not to whoever writes: an
+            # administrator filling someone's calendar uses that account's space.
+            taille = len(data.encode("utf-8"))
+            ancienne = int(existing["size"]) if existing is not None else 0
+            usage = self.db.account_usage(resource.calendar["user_id"])
+            if usage - ancienne + taille > quota:
+                return self._precondition(
+                    dav("quota-not-exceeded"),
+                    f"Quota dépassé : {usage} octets utilisés sur {quota}.",
+                    status=507,
+                )
+
         if carnet:
             try:
                 card = parse_vcard(data)
@@ -526,12 +540,12 @@ class DavHandler:
         return options
 
     @staticmethod
-    def _precondition(tag: str, message: str) -> Response:
+    def _precondition(tag: str, message: str, status: int = 403) -> Response:
         root = ET.Element(dav("error"))
         ET.SubElement(root, tag)
         detail = ET.SubElement(root, dav("responsedescription"))
         detail.text = message
-        return xml_response(403, to_bytes(root))
+        return xml_response(status, to_bytes(root))
 
     # ---------------------------------------------------------------- REPORT
 

@@ -690,6 +690,7 @@ def _importer(
         resource.calendar,
         brut.decode("utf-8", "replace"),
         max_taille=config.max_resource_size,
+        quota=config.quota_bytes,
     )
     message = rapport.resume()
     if rapport.erreurs:
@@ -766,6 +767,7 @@ def _creer_agenda(db, config, request: Request, user_row, admin: bool, token: st
         db.get_calendar_by_id(calendar_id),
         fichier.decode("utf-8", "replace"),
         max_taille=config.max_resource_size,
+        quota=config.quota_bytes,
     )
     if rapport.total == 0:
         # An empty calendar left behind by a failed import has no reason to

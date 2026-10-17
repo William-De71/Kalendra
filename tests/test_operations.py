@@ -243,5 +243,68 @@ class AppPasswordTests(ServerTestCase):
         self.assertEqual(self.db.list_app_passwords(self.alice_id), [])
 
 
+class QuotaTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.taille = len(make_event(uid="q0"))
+        # Room for two events, not three.
+        self.config.quota_bytes = self.taille * 2 + self.taille // 2
+
+    def test_refus_au_dela_du_quota(self):
+        self.assertStatus(self.client.put(f"{PERSO}1.ics", make_event(uid="q1")), 201)
+        self.assertStatus(self.client.put(f"{PERSO}2.ics", make_event(uid="q2")), 201)
+        refus = self.client.put(f"{PERSO}3.ics", make_event(uid="q3"))
+        self.assertStatus(refus, 507)
+        self.assertIn("quota-not-exceeded", refus.text)
+
+    def test_remplacer_un_objet_ne_compte_que_la_difference(self):
+        self.client.put(f"{PERSO}1.ics", make_event(uid="q1"))
+        self.client.put(f"{PERSO}2.ics", make_event(uid="q2"))
+        self.assertStatus(self.client.put(f"{PERSO}2.ics", make_event(uid="q2")), 204)
+
+    def test_le_quota_est_celui_du_compte_proprietaire(self):
+        self.client.put(f"{PERSO}1.ics", make_event(uid="q1"))
+        self.client.put(f"{PERSO}2.ics", make_event(uid="q2"))
+        # Alice's account is empty: her calendar still has room.
+        self.assertStatus(
+            self.alice.put("/calendars/alice/boulot/1.ics", make_event(uid="a1")), 201
+        )
+
+    def test_quota_disponible_annonce(self):
+        self.client.put(f"{PERSO}1.ics", make_event(uid="q1"))
+        reponse = self.client.propfind(
+            PERSO,
+            "<?xml version='1.0'?><d:propfind xmlns:d='DAV:'><d:prop>"
+            "<d:quota-available-bytes/><d:quota-used-bytes/></d:prop></d:propfind>",
+        )
+        restant = self.config.quota_bytes - self.taille
+        self.assertIn(f"quota-available-bytes>{restant}<", reponse.text)
+
+    def test_sans_quota_rien_nest_annonce(self):
+        self.config.quota_bytes = 0
+        reponse = self.client.propfind(
+            PERSO,
+            "<?xml version='1.0'?><d:propfind xmlns:d='DAV:'><d:prop>"
+            "<d:quota-available-bytes/></d:prop></d:propfind>",
+        )
+        self.assertIn("404 Not Found", reponse.text)
+
+    def test_limport_sarrete_au_quota(self):
+        from kalendra.importics import importer
+
+        blocs = "".join(
+            f"BEGIN:VEVENT\r\nUID:i{n}\r\nDTSTAMP:20260101T000000Z\r\n"
+            f"DTSTART:20260310T090000Z\r\nSUMMARY:x\r\nEND:VEVENT\r\n"
+            for n in range(10)
+        )
+        contenu = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\n{blocs}END:VCALENDAR\r\n"
+        calendrier = self.db.get_calendar_by_id(self.perso_id)
+        rapport = importer(self.db, calendrier, contenu, max_taille=10**6, quota=500)
+        self.assertGreater(rapport.crees, 0)
+        self.assertGreater(rapport.ignores, 0)
+        self.assertLessEqual(self.db.account_usage(self.will_id), 500)
+        self.assertIn("quota", rapport.erreurs[0])
+
+
 if __name__ == "__main__":
     unittest.main()

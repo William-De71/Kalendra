@@ -54,6 +54,10 @@ class Config:
         default_factory=lambda: _int("KALENDRA_MAX_REQUEST_BODY", 8_388_608)
     )
 
+    #: Storage allowed per account across all its collections (bytes);
+    #: 0 means unlimited.
+    quota_bytes: int = field(default_factory=lambda: _int("KALENDRA_QUOTA_BYTES", 0))
+
     #: Enables the web admin interface.
     admin_ui: bool = field(default_factory=lambda: _bool("KALENDRA_ADMIN_UI", True))
 
