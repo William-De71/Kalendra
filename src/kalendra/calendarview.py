@@ -19,6 +19,7 @@ from html import escape
 from urllib.parse import parse_qs, quote
 
 from . import __version__
+from .account import handle_account
 from .export import export_addressbook, export_calendar
 from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
@@ -1158,7 +1159,13 @@ def handle_view(
     admin = bool(user_row["is_admin"])
     tz = None  # None = fuseau local du serveur (variable TZ du conteneur)
 
-    # Three actions write: import, calendar creation and calendar deletion.
+    # One segment never named anything else (a calendar needs two), so the
+    # account page cannot shadow a user called "compte".
+    if segments == ["compte"]:
+        return handle_account(db, config, request, token)
+
+    # Writes, all behind the CSRF token: .ics and .vcf import, calendar
+    # creation and deletion, and app passwords on the account page above.
     # Everything else in this view is read-only.
     if request.method == "POST":
         if (

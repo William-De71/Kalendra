@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, quote
 from . import __version__
 from .http import Request, Response, error, text_response
 from .security import csrf_valid
-from .webui import BASE_STYLE, rail, titre
+from .webui import BASE_STYLE, public_base_url, rail, titre
 
 # Palette, body and sidebar live in webui.BASE_STYLE, prepended to this one.
 STYLE = """
@@ -74,14 +74,6 @@ def _page(title: str, body: str, base: str = "", username: str = "") -> Response
 def _form_data(request: Request) -> dict[str, str]:
     parsed = parse_qs(request.text, keep_blank_values=True)
     return {key: values[0] for key, values in parsed.items()}
-
-
-def _base_url(config, request: Request) -> str:
-    if config.public_url:
-        return config.public_url
-    host = request.header("x-forwarded-host") or request.header("host") or "localhost"
-    scheme = request.header("x-forwarded-proto") or "http"
-    return f"{scheme}://{host}{config.base_path}"
 
 
 def handle_admin(db, config, request: Request, segments: list[str], token: str) -> Response:
@@ -220,7 +212,7 @@ def _etat(actif: bool, detail: str) -> str:
 
 
 def _dashboard(db, config, request: Request, token: str) -> Response:
-    base = _base_url(config, request)
+    base = public_base_url(config, request)
     message = request.query_param("msg")
     users = db.list_users()
 
@@ -354,7 +346,7 @@ def _user_page(db, config, request: Request, token: str, user_id: int) -> Respon
     if user is None:
         return error(404, "Compte inconnu.")
 
-    base = _base_url(config, request)
+    base = public_base_url(config, request)
     bp = config.base_path
     message = request.query_param("msg")
     calendars = db.list_calendars(user["id"])
