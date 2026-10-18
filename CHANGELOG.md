@@ -5,6 +5,13 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Corrigé
+
+- « Préparer une version » ne committait pas `pyproject.toml` : l'étiquette
+  produite portait deux numéros différents et la publication échouait à la
+  vérification préalable. Le workflow vérifie désormais l'accord des numéros
+  avant de pousser quoi que ce soit.
+
 ## [1.2.0] — 2026-10-18
 
 ### Ajouté
