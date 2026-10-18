@@ -104,7 +104,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/kalendra/__init__.py CHANGELOG.md
+          # The three files bump-version.py rewrites, all of them: leaving
+          # pyproject.toml out tagged 1.2.0 with __init__.py and pyproject.toml
+          # disagreeing, which release.yml then refuses to publish.
+          git add src/kalendra/__init__.py pyproject.toml CHANGELOG.md
+          # Same check release.yml makes, before anything is pushed: a tag
+          # that cannot be published is worse than no tag at all.
+          test "$(python scripts/bump-version.py --show)" = "${VERSION}"
           git commit -m "chore: version ${VERSION}"
           git tag -a "v${VERSION}" -m "Kalendra ${VERSION}"
           git push origin HEAD:main
