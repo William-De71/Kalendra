@@ -23,12 +23,15 @@ from .account import handle_account
 from .export import export_addressbook, export_calendar
 from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
+    InvalidCalendarData,
     Occurrence,
     component_window,
     expand_occurrences,
     from_unix,
     parse_calendar,
+    parse_datetime_value,
     to_unix,
+    to_utc,
 )
 from .importics import importer
 from .importvcf import importer_cartes
@@ -139,6 +142,17 @@ table.semaine th .date { display:block; color:var(--fg); font-size:15px;
   text-transform:none; letter-spacing:0; }
 table.semaine th.today .date { color:var(--accent); }
 section.liste { max-width:760px; }
+section.taches li { align-items:baseline; }
+section.taches .coche { color:var(--muted); width:1em; flex:none; }
+section.taches .echeance { color:var(--muted); font-size:13px; margin-left:auto;
+  white-space:nowrap; font-variant-numeric:tabular-nums; }
+section.taches .retard { color:var(--danger); font-weight:600; }
+section.taches .prio { font-size:11.5px; border:1px solid var(--line); border-radius:6px;
+  padding:0 6px; color:var(--muted); white-space:nowrap; }
+section.taches .prio.haute { color:var(--danger); border-color:currentColor; }
+section.taches .faite a { color:var(--muted); text-decoration:line-through; }
+section.taches details { margin-top:22px; }
+section.taches summary { cursor:pointer; color:var(--muted); font-size:14px; }
 section.liste h3 { font-size:14px; margin:22px 0 8px; }
 /* "Lundi 5 octobre": French capitalises the sentence, not every word. */
 section.liste h3::first-letter { text-transform:uppercase; }
@@ -351,11 +365,14 @@ def _entete_agenda(
     user: str,
     vue: str,
     periode: str,
-    precedent: str,
-    aujourdhui: str,
-    suivant: str,
+    precedent: str | None,
+    aujourdhui: str | None,
+    suivant: str | None,
 ) -> str:
-    """Title bar shared by the three views: navigation, mode, export."""
+    """Title bar shared by the views: navigation, mode, export.
+
+    The task list spans no period, so it passes no navigation links.
+    """
     base = config.base_path
     nom = calendar_row["name"]
 
@@ -368,13 +385,18 @@ def _entete_agenda(
         f"{escape(calendar_row['color'] or '#3584e4')}'></span>"
         f"<h1>{escape(calendar_row['display_name'] or nom)}</h1>"
         f"<span class=meta>{escape(periode)}</span>",
-        f"<a href='{precedent}' aria-label='période précédente'>←</a>"
-        f"<a href='{aujourdhui}'>aujourd'hui</a>"
-        f"<a href='{suivant}' aria-label='période suivante'>→</a>"
-        "<span class=sep></span>"
+        (
+            f"<a href='{precedent}' aria-label='période précédente'>←</a>"
+            f"<a href='{aujourdhui}'>aujourd'hui</a>"
+            f"<a href='{suivant}' aria-label='période suivante'>→</a>"
+            "<span class=sep></span>"
+            if precedent
+            else ""
+        )
         + onglet("mois", "Mois", _lien_vue(base, user, nom))
         + onglet("semaine", "Semaine", _lien_vue(base, user, nom, vue="semaine"))
         + onglet("liste", "Liste", _lien_vue(base, user, nom, vue="liste"))
+        + onglet("taches", "Tâches", _lien_vue(base, user, nom, vue="taches"))
         + "<span class=sep></span>"
         f"<a href='{_lien_vue(base, user, nom, export='ics')}' download>Exporter (.ics)</a>",
     )
@@ -571,6 +593,170 @@ def rendre_liste(
     )
     titre_agenda = calendar_row["display_name"] or nom
     return _page(f"{titre_agenda} — {MOIS[mois - 1]} {annee}", corps, base, admin, connecte)
+
+
+@dataclass
+class Tache:
+    href: str
+    titre: str
+    #: Due date in UTC, None when the task has none.
+    echeance: datetime | None
+    journee: bool
+    faite: bool
+    priorite: int
+    avancement: int | None
+    terminee: datetime | None
+
+
+def _instant(composant, nom: str) -> tuple[datetime | None, bool]:
+    """A DATE or DATE-TIME property in UTC, and whether it was a bare date."""
+    prop = composant.get(nom)
+    if prop is None:
+        return None, False
+    valeur = parse_datetime_value(prop.value, prop.param("TZID"))
+    return to_utc(valeur), valeur is not None and not isinstance(valeur, datetime)
+
+
+def lister_taches(db, calendar_row) -> list[Tache]:
+    """The calendar's VTODOs, read from the stored objects without altering them.
+
+    A recurring task shows once, through its master component: a to-do list
+    wants "what is left to do", not every past and future instance.
+    """
+    taches = []
+    for row in db.query_objects(calendar_row["id"], components=["VTODO"]):
+        try:
+            composants = parse_calendar(row["data"]).children
+        except InvalidCalendarData:
+            # Unreadable: still listed, under its summary, rather than hidden.
+            taches.append(
+                Tache(row["href"], row["summary"] or row["href"], None, False, False, 0, None, None)
+            )
+            continue
+        todo = next(
+            (c for c in composants if c.name == "VTODO" and c.get("RECURRENCE-ID") is None),
+            None,
+        )
+        if todo is None:
+            continue
+
+        echeance, journee = _instant(todo, "DUE")
+        terminee, _ = _instant(todo, "COMPLETED")
+        statut = todo.value("STATUS").strip().upper()
+        try:
+            avancement = int(todo.value("PERCENT-COMPLETE") or "")
+        except ValueError:
+            avancement = None
+        try:
+            priorite = int(todo.value("PRIORITY") or "0")
+        except ValueError:
+            priorite = 0
+        faite = statut in {"COMPLETED", "CANCELLED"} or terminee is not None or avancement == 100
+        resume = todo.get("SUMMARY")
+        taches.append(
+            Tache(
+                row["href"],
+                (resume.text if resume else "") or "(sans titre)",
+                echeance,
+                journee,
+                faite,
+                priorite if 0 <= priorite <= 9 else 0,
+                avancement,
+                terminee,
+            )
+        )
+    return taches
+
+
+def _priorite(valeur: int) -> str:
+    # RFC 5545 §3.8.1.9: 1-4 high, 5 medium, 6-9 low, 0 undefined.
+    if 1 <= valeur <= 4:
+        return "<span class='prio haute'>haute</span>"
+    if valeur == 5:
+        return "<span class=prio>moyenne</span>"
+    if 6 <= valeur <= 9:
+        return "<span class=prio>basse</span>"
+    return ""
+
+
+def rendre_taches(
+    db, config, calendar_row, user: str, tz, admin: bool = False, connecte: str = ""
+) -> Response:
+    """Open tasks by due date then priority; completed ones folded below."""
+    base = config.base_path
+    nom = calendar_row["name"]
+    maintenant = datetime.now(UTC)
+    taches = lister_taches(db, calendar_row)
+    a_faire = sorted(
+        (t for t in taches if not t.faite),
+        key=lambda t: (
+            t.echeance is None,
+            t.echeance or maintenant,
+            t.priorite == 0,
+            t.priorite,
+            t.titre.casefold(),
+        ),
+    )
+    faites = sorted(
+        (t for t in taches if t.faite),
+        key=lambda t: t.terminee or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+
+    def ligne(tache: Tache) -> str:
+        cible = f"{base}/view/{quote(user)}/{quote(nom)}/{quote(tache.href)}"
+        quand = ""
+        if tache.echeance is not None:
+            if tache.journee:
+                # Like all-day events: a date, never shifted by a time zone.
+                texte = f"{tache.echeance:%d/%m/%Y}"
+                en_retard = tache.echeance.date() < maintenant.date()
+            else:
+                texte = f"{_local(to_unix(tache.echeance), tz):%d/%m/%Y %H:%M}"
+                en_retard = tache.echeance < maintenant
+            classe = "echeance retard" if en_retard and not tache.faite else "echeance"
+            quand = f"<span class='{classe}'>{texte}</span>"
+        avancement = (
+            f"<span class=prio>{tache.avancement} %</span>"
+            if tache.avancement and 0 < tache.avancement < 100 and not tache.faite
+            else ""
+        )
+        coche = "✓" if tache.faite else "○"
+        classe = " class=faite" if tache.faite else ""
+        return (
+            f"<li{classe}><span class=coche aria-hidden=true>{coche}</span>"
+            f"<a href='{cible}'>{escape(tache.titre)}</a>"
+            f"{_priorite(tache.priorite) if not tache.faite else ''}{avancement}{quand}</li>"
+        )
+
+    contenu = (
+        f"<ul>{''.join(ligne(t) for t in a_faire)}</ul>"
+        if a_faire
+        else "<p class=vide>Aucune tâche en cours.</p>"
+    )
+    if faites:
+        contenu += (
+            f"<details><summary>{len(faites)} tâche{'s' if len(faites) > 1 else ''} "
+            f"terminée{'s' if len(faites) > 1 else ''}</summary>"
+            f"<ul>{''.join(ligne(t) for t in faites)}</ul></details>"
+        )
+    corps = (
+        _entete_agenda(
+            config,
+            calendar_row,
+            user,
+            "taches",
+            f"{len(a_faire)} à faire",
+            None,
+            None,
+            None,
+        )
+        + f"<main><section class='liste taches'>{contenu}</section></main>"
+        "<footer>Vue en lecture seule : pour cocher ou modifier une tâche, utilisez "
+        "votre client (Thunderbird, Evolution, Tasks.org…).</footer>"
+    )
+    titre_agenda = calendar_row["display_name"] or nom
+    return _page(f"{titre_agenda} — tâches", corps, base, admin, connecte)
 
 
 def rendre_index(
@@ -1228,6 +1414,16 @@ def handle_view(db, config, request: Request, segments: list[str], token: str = 
 
     aujourdhui = datetime.now(tz).date() if tz else datetime.now().date()
     vue = request.query_param("vue")
+    if vue == "taches":
+        return rendre_taches(
+            db,
+            config,
+            resource.calendar,
+            resource.user["username"],
+            tz,
+            admin,
+            user_row["username"],
+        )
     if vue == "semaine":
         semaines = semaine_de(parse_jour(request.query_param("d"), aujourdhui), aujourdhui)
         remplir(db, resource.calendar, semaines, tz)

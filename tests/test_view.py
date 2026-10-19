@@ -267,6 +267,63 @@ class AutresVuesTests(VueMensuelleTests):
         self.assertNotIn("aria-current='page'>Mois", html)
 
 
+def tache(uid: str, extra: str) -> bytes:
+    return (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//tests//FR\r\nBEGIN:VTODO\r\n"
+        f"UID:{uid}\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:{uid}\r\n{extra}"
+        "END:VTODO\r\nEND:VCALENDAR\r\n"
+    ).encode()
+
+
+class TachesTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        for uid, extra in (
+            ("en-retard", "DUE:20200101T090000Z\r\nPRIORITY:1\r\n"),
+            ("plus-tard", "DUE:20990101T090000Z\r\nPERCENT-COMPLETE:40\r\n"),
+            ("sans-echeance", ""),
+            ("journee", "DUE;VALUE=DATE:20990315\r\n"),
+            ("finie", "DUE:20260101T090000Z\r\nSTATUS:COMPLETED\r\nCOMPLETED:20260102T090000Z\r\n"),
+        ):
+            self.assertStatus(self.client.put(f"{PERSO}{uid}.ics", tache(uid, extra)), 201)
+        # An event must not show up among tasks.
+        self.client.put(f"{PERSO}evt.ics", make_event(uid="evt", summary="Réunion"))
+
+    def page(self) -> str:
+        result = self.client.request("GET", f"{VUE}?vue=taches")
+        self.assertStatus(result, 200)
+        return result.text
+
+    def test_ordre_par_echeance_puis_sans_echeance(self):
+        html = self.page()
+        ordre = [
+            html.index(f">{uid}</a>")
+            for uid in ("en-retard", "plus-tard", "journee", "sans-echeance")
+        ]
+        self.assertEqual(ordre, sorted(ordre))
+        self.assertNotIn("Réunion", html)
+
+    def test_retard_priorite_avancement(self):
+        html = self.page()
+        self.assertIn("echeance retard", html)
+        self.assertIn("prio haute'>haute", html)
+        self.assertIn("40 %", html)
+        self.assertIn("15/03/2099", html)
+
+    def test_terminees_repliees(self):
+        html = self.page()
+        repli = html.index("<details>")
+        self.assertGreater(html.index(">finie</a>"), repli)
+        self.assertIn("1 tâche terminée", html)
+        self.assertIn("4 à faire", html)
+
+    def test_onglet_present_partout(self):
+        self.assertIn("vue=taches", self.client.request("GET", VUE).text)
+
+    def test_cloisonne(self):
+        self.assertStatus(self.alice.request("GET", f"{VUE}?vue=taches"), 403)
+
+
 class DetailTests(ServerTestCase):
     def setUp(self) -> None:
         super().setUp()
