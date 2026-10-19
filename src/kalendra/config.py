@@ -58,6 +58,12 @@ class Config:
     #: 0 means unlimited.
     quota_bytes: int = field(default_factory=lambda: _int("KALENDRA_QUOTA_BYTES", 0))
 
+    #: Days a deleted object's sync tombstone is kept; 0 keeps them forever.
+    #: A client offline for longer does a full resync instead of a delta.
+    sync_retention_days: int = field(
+        default_factory=lambda: _int("KALENDRA_SYNC_RETENTION_DAYS", 90)
+    )
+
     #: Enables the web admin interface.
     admin_ui: bool = field(default_factory=lambda: _bool("KALENDRA_ADMIN_UI", True))
 

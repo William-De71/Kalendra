@@ -247,6 +247,38 @@ class AppPasswordTests(ServerTestCase):
         finally:
             conn.close()
 
+    def test_migration_dune_base_v4(self):
+        # The changes and calendars tables as v4 created them: no changed_at,
+        # no sync_floor. A tombstone in them must survive the migration dated.
+        chemin = os.path.join(self.tmp, "v4.db")
+        conn = sqlite3.connect(chemin)
+        conn.executescript(
+            "CREATE TABLE changes (id INTEGER PRIMARY KEY, calendar_id INTEGER NOT NULL,"
+            " href TEXT NOT NULL, sync_rev INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,"
+            " UNIQUE (calendar_id, href));"
+            "CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,"
+            " kind TEXT NOT NULL DEFAULT 'calendar', name TEXT NOT NULL,"
+            " display_name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',"
+            " color TEXT NOT NULL DEFAULT '#3584e4', sort_order INTEGER NOT NULL DEFAULT 0,"
+            " timezone TEXT NOT NULL DEFAULT '', components TEXT NOT NULL DEFAULT 'VEVENT,VTODO',"
+            " sync_rev INTEGER NOT NULL DEFAULT 1, feed_token TEXT UNIQUE,"
+            " feed_enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);"
+            "INSERT INTO changes (calendar_id, href, sync_rev, deleted) VALUES (1, 'x.ics', 3, 1);"
+            "PRAGMA user_version = 4;"
+        )
+        conn.close()
+        from kalendra.db import connect, init_db
+
+        conn = connect(chemin)
+        try:
+            init_db(conn)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
+            date = conn.execute("SELECT changed_at FROM changes").fetchone()[0]
+            self.assertIsNotNone(date)
+            self.assertEqual(conn.execute("SELECT sync_floor FROM calendars").fetchall(), [])
+        finally:
+            conn.close()
+
     def test_cli(self):
         buffer = io.StringIO()
         with redirect_stdout(buffer):
