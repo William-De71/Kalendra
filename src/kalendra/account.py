@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import plistlib
 import re
+import secrets
+import threading
+import time
 import uuid
 from html import escape
 from urllib.parse import parse_qs, quote, urlsplit
 
 from . import __version__
 from .export import export_account
-from .http import Request, Response, error, text_response
+from .http import REALM, Request, Response, error, text_response
 from .security import csrf_valid, verify_password
 from .webui import BASE_STYLE, public_base_url, rail, titre
 
@@ -425,3 +428,84 @@ def _changer_mot_de_passe(
 def _rediriger(config, message: str, ancre: str = "mots-de-passe") -> Response:
     cible = f"{config.base_path}/view/compte/?msg={quote(message)}#{ancre}"
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
+
+
+#: How long a "switch user" link stays usable once followed.
+DUREE_CHANGEMENT = 300
+#: Upper bound on pending switches: a script looping on the link must not
+#: grow the table without end.
+MAX_CHANGEMENTS = 1000
+
+
+class _Changements:
+    """One-time nonces behind "Changer d'utilisateur".
+
+    Basic authentication has no logout: the browser replays its cached
+    credentials until a 401 makes it ask again. Answering 401 to every visit
+    of a fixed URL would loop forever — even the newly typed credentials
+    would be refused. So each switch gets a nonce, in two states: the first
+    authenticated visit answers 401 (the browser prompts), the second one,
+    with whatever account was typed, consumes the nonce and goes back to
+    /view/. Re-entering the same account works too.
+
+    In memory and per process: a restart only loses switches in progress.
+    """
+
+    def __init__(self) -> None:
+        self._verrou = threading.Lock()
+        self._jetons: dict[str, tuple[float, bool]] = {}
+
+    def creer(self) -> str:
+        jeton = secrets.token_urlsafe(16)
+        maintenant = time.monotonic()
+        with self._verrou:
+            self._jetons = {j: v for j, v in self._jetons.items() if v[0] > maintenant}
+            if len(self._jetons) >= MAX_CHANGEMENTS:
+                # Insertion order is creation order: drop the oldest.
+                del self._jetons[next(iter(self._jetons))]
+            self._jetons[jeton] = (maintenant + DUREE_CHANGEMENT, False)
+        return jeton
+
+    def visiter(self, jeton: str) -> str:
+        """ "defi" to challenge the browser, "fini" once it answered, else ""."""
+        maintenant = time.monotonic()
+        with self._verrou:
+            etat = self._jetons.get(jeton)
+            if etat is None or etat[0] <= maintenant:
+                self._jetons.pop(jeton, None)
+                return ""
+            if not etat[1]:
+                self._jetons[jeton] = (etat[0], True)
+                return "defi"
+            del self._jetons[jeton]
+            return "fini"
+
+
+CHANGEMENTS = _Changements()
+
+
+def changer_utilisateur(config, request: Request) -> Response:
+    """`/view/changer`: make the browser forget its credentials and ask again."""
+    if request.method not in {"GET", "HEAD"}:
+        return error(405, "Méthode non autorisée.").header("Allow", "GET, HEAD")
+    base = config.base_path
+    jeton = request.query_param("j") or ""
+    if not jeton:
+        cible = f"{base}/view/changer?j={CHANGEMENTS.creer()}"
+        return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
+    if CHANGEMENTS.visiter(jeton) != "defi":
+        return Response(303, b"", [("Location", f"{base}/view/"), ("Content-Length", "0")])
+    # Shown only if the person cancels the prompt.
+    html = (
+        "<!doctype html><html lang=fr><head><meta charset=utf-8>"
+        '<meta name=viewport content="width=device-width, initial-scale=1">'
+        f"<title>Changer d'utilisateur</title><style>{BASE_STYLE}{STYLE}</style></head>"
+        "<body><main><section class=bloc><h2>Changer d'utilisateur</h2>"
+        "<p class=muted>Saisissez l'identifiant et le mot de passe du compte voulu dans la "
+        "fenêtre de connexion du navigateur.</p>"
+        f"<p><a href='{escape(base)}/view/changer'>Réessayer</a> · "
+        f"<a href='{escape(base)}/view/'>Revenir aux agendas</a></p></section></main>"
+        "</body></html>"
+    )
+    response = text_response(401, html, "text/html; charset=utf-8")
+    return response.header("WWW-Authenticate", REALM).header("Cache-Control", "no-store")

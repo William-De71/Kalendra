@@ -20,7 +20,7 @@ from html import escape
 from urllib.parse import parse_qs, quote
 
 from . import __version__
-from .account import handle_account
+from .account import changer_utilisateur, handle_account
 from .export import export_addressbook, export_calendar
 from .http import Request, Response, error, parse_multipart, text_response
 from .ics import (
@@ -1486,6 +1486,8 @@ def handle_view(db, config, request: Request, segments: list[str], token: str = 
     # account page cannot shadow a user called "compte".
     if segments == ["compte"]:
         return handle_account(db, config, request, token)
+    if segments == ["changer"]:
+        return changer_utilisateur(config, request)
 
     # Writes, all behind the CSRF token: .ics and .vcf import, calendar
     # creation and deletion, and app passwords on the account page above.
