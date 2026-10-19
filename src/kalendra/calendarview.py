@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import calendar as _calendar
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, timezone
 from html import escape
@@ -142,6 +143,11 @@ table.semaine th .date { display:block; color:var(--fg); font-size:15px;
   text-transform:none; letter-spacing:0; }
 table.semaine th.today .date { color:var(--accent); }
 section.liste { max-width:760px; }
+form.recherche { display:flex; gap:6px; }
+form.recherche input { font:inherit; font-size:13.5px; padding:5px 10px; width:220px;
+  border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+section.liste .agenda { color:var(--muted); font-size:12.5px; white-space:nowrap; }
+section.liste .lieu { color:var(--muted); font-size:13px; }
 section.taches li { align-items:baseline; }
 section.taches .coche { color:var(--muted); width:1em; flex:none; }
 section.taches .echeance { color:var(--muted); font-size:13px; margin-left:auto;
@@ -759,6 +765,143 @@ def rendre_taches(
     return _page(f"{titre_agenda} — tâches", corps, base, admin, connecte)
 
 
+#: Beyond this many hits, the query needs narrowing rather than scrolling.
+MAX_RESULTATS = 100
+
+
+def _plier(texte: str) -> str:
+    """Case- and accent-insensitive form: "Réunion" and "reunion" must meet."""
+    decompose = unicodedata.normalize("NFKD", texte.casefold())
+    return "".join(c for c in decompose if not unicodedata.combining(c))
+
+
+def _formulaire_recherche(base: str, valeur: str = "") -> str:
+    return (
+        f"<form class=recherche method=get action='{base}/view/recherche/' role=search>"
+        f"<input type=search name=q value='{escape(valeur)}' "
+        "placeholder='Rechercher un événement…' aria-label='Rechercher'></form>"
+    )
+
+
+def chercher(db, calendriers, requete: str) -> list[tuple]:
+    """Objects whose title, place, description or categories contain `requete`.
+
+    Matching happens on the parsed text, not in SQL: LIKE folds ASCII case
+    only, and "Réunion" would then miss "reunion". At a family's scale,
+    reading every object of one's own calendars stays well under a second.
+    """
+    aiguille = _plier(requete.strip())
+    trouves = []
+    for proprietaire, calendrier in calendriers:
+        for row in db.query_objects(calendrier["id"], components=["VEVENT", "VTODO", "VJOURNAL"]):
+            try:
+                composants = parse_calendar(row["data"]).children
+            except InvalidCalendarData:
+                composants = []
+            textes = [row["summary"] or ""]
+            lieu = ""
+            journee = any(component_window(c)[2] for c in composants if c.name == "VEVENT")
+            for composant in composants:
+                for nom in ("SUMMARY", "LOCATION", "DESCRIPTION", "CATEGORIES"):
+                    for prop in composant.all(nom):
+                        textes.append(prop.text)
+                        if nom == "LOCATION" and not lieu:
+                            lieu = prop.text
+            if any(aiguille in _plier(t) for t in textes):
+                trouves.append((proprietaire, calendrier, row, lieu, journee))
+                if len(trouves) > MAX_RESULTATS:
+                    return trouves
+    return trouves
+
+
+def rendre_recherche(
+    db, config, user_row, admin: bool, requete: str, connecte: str = ""
+) -> Response:
+    base = config.base_path
+    if admin:
+        calendriers = [(row["username"], row) for row in db.list_all_calendars()]
+    else:
+        calendriers = [(user_row["username"], row) for row in db.list_calendars(user_row["id"])]
+
+    requete = requete.strip()[:200]
+    if len(requete) < 2:
+        contenu = "<p class=vide>Tapez au moins deux caractères.</p>"
+        total = 0
+    else:
+        trouves = chercher(db, calendriers, requete)
+        tronque = len(trouves) > MAX_RESULTATS
+        trouves = trouves[:MAX_RESULTATS]
+        total = len(trouves)
+        maintenant = to_unix(datetime.now(UTC))
+        # Upcoming first, soonest at the top; then the past, latest first —
+        # what one searches a calendar for is usually ahead.
+        a_venir = sorted(
+            (t for t in trouves if (t[2]["dtend"] or t[2]["dtstart"] or 0) >= maintenant),
+            key=lambda t: t[2]["dtstart"] or 0,
+        )
+        passes = sorted(
+            (t for t in trouves if (t[2]["dtend"] or t[2]["dtstart"] or 0) < maintenant),
+            key=lambda t: t[2]["dtstart"] or 0,
+            reverse=True,
+        )
+
+        def ligne(trouve) -> str:
+            proprietaire, calendrier, row, lieu, journee = trouve
+            cible = (
+                f"{base}/view/{quote(proprietaire)}/{quote(calendrier['name'])}/"
+                f"{quote(row['href'])}"
+            )
+            if row["dtstart"] is None:
+                quand = "—"
+            elif journee:
+                # Stored at midnight UTC: converting would move it to the day
+                # before anywhere west of Greenwich.
+                quand = f"{from_unix(row['dtstart']):%d/%m/%Y}"
+            else:
+                quand = f"{_local(row['dtstart'], None):%d/%m/%Y}"
+            if row["recurring"]:
+                quand += " ↻"
+            agenda = calendrier["display_name"] or calendrier["name"]
+            if admin:
+                agenda = f"{proprietaire} · {agenda}"
+            return (
+                f"<li><span class=heure>{quand}</span>"
+                f"<span><a href='{cible}'>{escape(row['summary'] or '(sans titre)')}</a>"
+                + (f"<br><span class=lieu>{escape(lieu)}</span>" if lieu else "")
+                + "</span>"
+                f"<span class=agenda style='margin-left:auto'>"
+                f"<span class=pastille style='background:"
+                f"{escape(calendrier['color'] or '#3584e4')}'></span> {escape(agenda)}</span></li>"
+            )
+
+        blocs = []
+        if a_venir:
+            blocs.append(f"<h3>À venir</h3><ul>{''.join(ligne(t) for t in a_venir)}</ul>")
+        if passes:
+            blocs.append(f"<h3>Passés</h3><ul>{''.join(ligne(t) for t in passes)}</ul>")
+        contenu = "".join(blocs) or "<p class=vide>Aucun résultat.</p>"
+        if tronque:
+            contenu += (
+                f"<p class=vide>Plus de {MAX_RESULTATS} résultats : précisez la recherche.</p>"
+            )
+
+    corps = (
+        titre(
+            "<h1>Recherche</h1>"
+            + (
+                f"<span class=meta>{total} résultat{'s' if total > 1 else ''}</span>"
+                if requete
+                else ""
+            ),
+            _formulaire_recherche(base, requete),
+        )
+        + f"<main><section class=liste>{contenu}</section></main>"
+        "<footer>Titres, lieux, descriptions et catégories ; les dates sont celles du "
+        "premier passage (↻ : événement récurrent).</footer>"
+    )
+    return _page("Kalendra — recherche", corps, base, admin, connecte)
+
+
 def rendre_index(
     db,
     config,
@@ -862,7 +1005,7 @@ def rendre_index(
         )
 
     corps = (
-        titre("<h1>Agendas et contacts</h1>")
+        titre("<h1>Agendas et contacts</h1>", _formulaire_recherche(base))
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + "<main><h2 class=section>Agendas</h2>"
         + liste(agendas, "", "objet", "Aucun agenda.")
@@ -1365,6 +1508,12 @@ def handle_view(db, config, request: Request, segments: list[str], token: str = 
 
     if request.method not in {"GET", "HEAD"}:
         return error(405, "Vue en lecture seule.").header("Allow", "GET, HEAD, POST")
+
+    # Single segment, like the account page: no calendar is ever named by one.
+    if segments == ["recherche"]:
+        return rendre_recherche(
+            db, config, user_row, admin, request.query_param("q"), user_row["username"]
+        )
 
     if not segments:
         return rendre_index(

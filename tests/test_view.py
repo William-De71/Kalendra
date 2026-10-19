@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unittest
 from datetime import UTC, date, datetime
+from urllib.parse import quote
 
 from helpers import ServerTestCase, make_event
 from kalendra.calendarview import (
@@ -322,6 +323,70 @@ class TachesTests(ServerTestCase):
 
     def test_cloisonne(self):
         self.assertStatus(self.alice.request("GET", f"{VUE}?vue=taches"), 403)
+
+
+class RechercheTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.client.put(
+            f"{PERSO}a.ics",
+            make_event(uid="a", summary="Réunion de chantier", extra="LOCATION:Mairie d'Autun"),
+        )
+        self.client.put(
+            f"{PERSO}b.ics",
+            make_event(
+                uid="b",
+                start="20990101T090000Z",
+                end="20990101T100000Z",
+                summary="Dentiste",
+                extra="DESCRIPTION:Apporter la carte vitale",
+            ),
+        )
+        self.alice.put(
+            "/calendars/alice/boulot/c.ics", make_event(uid="c", summary="Réunion d'Alice")
+        )
+
+    def chercher(self, client, q: str) -> str:
+        result = client.request("GET", f"/view/recherche/?q={quote(q)}")
+        self.assertStatus(result, 200)
+        return result.text
+
+    def test_insensible_a_la_casse_et_aux_accents(self):
+        self.assertIn("Réunion de chantier", self.chercher(self.client, "REUNION"))
+
+    def test_lieu_et_description(self):
+        self.assertIn("Réunion de chantier", self.chercher(self.client, "autun"))
+        self.assertIn("Dentiste", self.chercher(self.client, "vitale"))
+
+    def test_a_venir_avant_passes(self):
+        html = self.chercher(self.client, "de")
+        self.assertLess(html.index("Dentiste"), html.index("Réunion de chantier"))
+        self.assertLess(html.index("À venir"), html.index("Passés"))
+
+    def test_un_compte_ne_voit_que_ses_agendas(self):
+        html = self.chercher(self.alice, "réunion")
+        self.assertIn("Réunion d&#x27;Alice", html)
+        self.assertNotIn("chantier", html)
+
+    def test_ladministrateur_voit_tout(self):
+        html = self.chercher(self.client, "réunion")
+        self.assertIn("Réunion d&#x27;Alice", html)
+        self.assertIn("alice · Boulot", html)
+
+    def test_requete_trop_courte(self):
+        self.assertIn("au moins deux", self.chercher(self.client, "a"))
+
+    def test_formulaire_sur_lindex(self):
+        self.assertIn("/view/recherche/", self.client.request("GET", "/view/").text)
+
+    def test_un_utilisateur_nomme_recherche_garde_ses_agendas(self):
+        from helpers import Client
+
+        uid = self.db.create_user("recherche", "x")
+        self.db.create_calendar(uid, "perso")
+        self.assertStatus(
+            Client(self.app, "recherche", "x").request("GET", "/view/recherche/perso/"), 200
+        )
 
 
 class DetailTests(ServerTestCase):
