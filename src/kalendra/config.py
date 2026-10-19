@@ -64,6 +64,15 @@ class Config:
         default_factory=lambda: _int("KALENDRA_SYNC_RETENTION_DAYS", 90)
     )
 
+    #: Directory for the daily automatic backup; empty disables it.
+    backup_dir: str = field(default_factory=lambda: os.environ.get("KALENDRA_BACKUP_DIR", ""))
+
+    #: Automatic backups kept in that directory; 0 keeps them all.
+    backup_keep: int = field(default_factory=lambda: _int("KALENDRA_BACKUP_KEEP", 7))
+
+    #: Local hour (0-23, server TZ) of the daily maintenance pass.
+    maintenance_hour: int = field(default_factory=lambda: _int("KALENDRA_MAINTENANCE_HOUR", 3))
+
     #: Enables the web admin interface.
     admin_ui: bool = field(default_factory=lambda: _bool("KALENDRA_ADMIN_UI", True))
 

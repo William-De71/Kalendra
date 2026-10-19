@@ -74,6 +74,97 @@ class BackupTests(ServerTestCase):
         self.assertIn("Sauvegarde écrite", buffer.getvalue())
 
 
+class MaintenanceTests(ServerTestCase):
+    def test_prochaine_echeance(self):
+        from datetime import datetime
+
+        from kalendra.maintenance import prochaine_echeance
+
+        self.assertEqual(
+            prochaine_echeance(datetime(2026, 10, 19, 1, 30), 3), datetime(2026, 10, 19, 3)
+        )
+        self.assertEqual(
+            prochaine_echeance(datetime(2026, 10, 19, 3, 0), 3), datetime(2026, 10, 20, 3)
+        )
+        self.assertEqual(
+            prochaine_echeance(datetime(2026, 12, 31, 23, 0), 3), datetime(2027, 1, 1, 3)
+        )
+
+    def test_rotation_ne_touche_que_ses_fichiers(self):
+        from datetime import datetime, timedelta
+
+        from kalendra.maintenance import sauvegarder
+
+        dossier = os.path.join(self.tmp, "sauvegardes")
+        os.makedirs(dossier)
+        with open(os.path.join(dossier, "a-garder.txt"), "w") as handle:
+            handle.write("pas une sauvegarde")
+        debut = datetime(2026, 10, 1, 3)
+        for jour in range(5):
+            sauvegarder(self.db, dossier, garder=3, maintenant=debut + timedelta(days=jour))
+        fichiers = sorted(os.listdir(dossier))
+        self.assertEqual(
+            fichiers,
+            [
+                "a-garder.txt",
+                "kalendra-20261003-030000.db",
+                "kalendra-20261004-030000.db",
+                "kalendra-20261005-030000.db",
+            ],
+        )
+
+    def test_entretien_complet(self):
+        from kalendra.maintenance import entretien
+
+        self.config.backup_dir = os.path.join(self.tmp, "auto")
+        self.config.sync_retention_days = 90
+        self.client.put(f"{PERSO}a.ics", make_event(uid="a"))
+        self.client.request("DELETE", f"{PERSO}a.ics")
+        self.db.conn.execute("UPDATE changes SET changed_at = datetime('now', '-200 days')")
+        etat = entretien(self.db, self.config)
+        self.assertEqual(etat.erreurs, [])
+        self.assertEqual(etat.tombes_purgees, 1)
+        self.assertIsNotNone(etat.derniere_sauvegarde)
+        self.assertEqual(len(os.listdir(self.config.backup_dir)), 1)
+
+    def test_un_echec_est_consigne_sans_lever(self):
+        from kalendra.maintenance import entretien
+
+        # A file where the directory should be: the backup cannot be written.
+        bloque = os.path.join(self.tmp, "fichier")
+        with open(bloque, "w") as handle:
+            handle.write("x")
+        self.config.backup_dir = bloque
+        with self.assertLogs("kalendra.maintenance", "ERROR"):
+            etat = entretien(self.db, self.config)
+        self.assertEqual(etat.echecs_sauvegarde, 1)
+        self.assertIsNone(etat.derniere_sauvegarde)
+        self.assertTrue(etat.erreurs)
+
+    def test_cli(self):
+        dossier = os.path.join(self.tmp, "cli")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(["--db", self.config.db_path, "maintenance", "--backup-dir", dossier])
+        self.assertEqual(code, 0)
+        self.assertIn("Sauvegarde : faite", buffer.getvalue())
+        self.assertEqual(len(os.listdir(dossier)), 1)
+
+    def test_le_fil_ne_demarre_quune_fois(self):
+        self.config.maintenance_hour = 3
+        self.app.start_maintenance()
+        premier = self.app._planificateur
+        self.app.start_maintenance()
+        try:
+            self.assertIs(self.app._planificateur, premier)
+            self.assertTrue(premier.is_alive())
+            self.assertTrue(premier.daemon)
+        finally:
+            premier.arreter()
+            premier.join(timeout=5)
+        self.assertFalse(premier.is_alive())
+
+
 class ThrottleTests(ServerTestCase):
     def setUp(self) -> None:
         super().setUp()

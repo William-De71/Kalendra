@@ -25,6 +25,7 @@ from .dav import DavHandler
 from .db import Database
 from .feed import handle_feed
 from .http import Request, Response, error, for_log, text_response
+from .maintenance import EtatEntretien, Planificateur
 from .security import csrf_token, verify_password
 
 logger = logging.getLogger("kalendra")
@@ -209,7 +210,27 @@ class Kalendra:
         self.throttle = _LoginThrottle(
             self.config.auth_max_failures, self.config.auth_lockout_seconds
         )
+        self.maintenance = EtatEntretien()
+        self._planificateur: Planificateur | None = None
         self._bootstrap()
+
+    def start_maintenance(self) -> None:
+        """Start the daily maintenance thread; idempotent.
+
+        Called by the server entry points only, never by the constructor: the
+        test suite and the CLI build applications that must not spawn it.
+        """
+        if self._planificateur is None:
+            self._planificateur = Planificateur(self.db, self.config, self.maintenance)
+            self._planificateur.start()
+            logger.info(
+                "maintenance quotidienne à %02d h : sauvegarde %s, purge du journal %s",
+                self.config.maintenance_hour % 24,
+                f"dans {self.config.backup_dir}" if self.config.backup_dir else "désactivée",
+                f"après {self.config.sync_retention_days} j"
+                if self.config.sync_retention_days > 0
+                else "désactivée",
+            )
 
     # ------------------------------------------------------------- démarrage
 
