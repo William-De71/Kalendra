@@ -180,7 +180,7 @@ class MetricsTests(ServerTestCase):
         for brute in texte.splitlines():
             if brute.startswith(ligne + " "):
                 return float(brute.rsplit(" ", 1)[1])
-        self.fail(f"{ligne} absent")
+        raise AssertionError(f"{ligne} absent")
 
     def test_desactive_par_defaut(self):
         self.config.metrics = False
