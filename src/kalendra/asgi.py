@@ -35,7 +35,7 @@ class ASGIApplication:
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "lifespan":
-            await self._lifespan(receive, send)
+            await self._lifespan(receive, send, self.application)
             return
         if scope["type"] != "http":
             return
@@ -76,10 +76,11 @@ class ASGIApplication:
         await self._send(send, response)
 
     @staticmethod
-    async def _lifespan(receive, send) -> None:
+    async def _lifespan(receive, send, application: Kalendra) -> None:
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
+                application.start_maintenance()
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
                 await send({"type": "lifespan.shutdown.complete"})

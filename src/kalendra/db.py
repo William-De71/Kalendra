@@ -14,11 +14,11 @@ import os
 import sqlite3
 import threading
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .security import app_password_digest, hash_password, new_token
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 #: Definition of `calendars`, shared between the initial schema and the v3
 #: migration that rebuilds the table to widen its uniqueness constraint.
@@ -34,6 +34,9 @@ SCHEMA_CALENDARS = """CREATE TABLE IF NOT EXISTS calendars (
     timezone      TEXT    NOT NULL DEFAULT '',
     components    TEXT    NOT NULL DEFAULT 'VEVENT,VTODO',
     sync_rev      INTEGER NOT NULL DEFAULT 1,
+    -- Oldest revision a sync token may still carry (v5): deletions recorded
+    -- before it were purged, so an older token cannot be answered exactly.
+    sync_floor    INTEGER NOT NULL DEFAULT 0,
     feed_token    TEXT    UNIQUE,
     feed_enabled  INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT    NOT NULL
@@ -87,6 +90,7 @@ CREATE TABLE IF NOT EXISTS changes (
     href        TEXT    NOT NULL,
     sync_rev    INTEGER NOT NULL,
     deleted     INTEGER NOT NULL DEFAULT 0,
+    changed_at  TEXT,
     UNIQUE (calendar_id, href)
 );
 
@@ -183,6 +187,24 @@ def init_db(conn: sqlite3.Connection) -> None:
                 "COMMIT;\n"
                 "PRAGMA foreign_keys=on;"
             )
+
+    if version < 5:
+        # v5: tombstones of deleted objects get a date, so they can be purged
+        # after a while, and calendars a floor below which sync tokens are no
+        # longer honoured. Columns are checked rather than assumed: a fresh
+        # database already has them from SCHEMA, an old one does not.
+        changements = {r[1] for r in conn.execute("PRAGMA table_info(changes)")}
+        if "changed_at" not in changements:
+            conn.execute("ALTER TABLE changes ADD COLUMN changed_at TEXT")
+        agendas = {r[1] for r in conn.execute("PRAGMA table_info(calendars)")}
+        if "sync_floor" not in agendas:
+            conn.execute("ALTER TABLE calendars ADD COLUMN sync_floor INTEGER NOT NULL DEFAULT 0")
+        # Existing tombstones are dated from the migration: the retention
+        # period starts now for them instead of purging them all at once.
+        conn.execute("UPDATE changes SET changed_at = ? WHERE changed_at IS NULL", (utcnow(),))
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_changes_purge ON changes (deleted, changed_at)"
+        )
 
     # v4 (app_passwords) only adds a table: `executescript(SCHEMA)` above has
     # already created it, IF NOT EXISTS, on old databases as on new ones.
@@ -650,10 +672,11 @@ class Database:
                 ),
             )
             conn.execute(
-                "INSERT INTO changes (calendar_id, href, sync_rev, deleted) VALUES (?, ?, ?, 0)"
+                "INSERT INTO changes (calendar_id, href, sync_rev, deleted, changed_at)"
+                " VALUES (?, ?, ?, 0, ?)"
                 " ON CONFLICT (calendar_id, href) DO UPDATE SET sync_rev = excluded.sync_rev,"
-                " deleted = 0",
-                (calendar_id, href, rev),
+                " deleted = 0, changed_at = excluded.changed_at",
+                (calendar_id, href, rev, now),
             )
             return rev
 
@@ -664,10 +687,11 @@ class Database:
                 "DELETE FROM objects WHERE calendar_id = ? AND href = ?", (calendar_id, href)
             )
             conn.execute(
-                "INSERT INTO changes (calendar_id, href, sync_rev, deleted) VALUES (?, ?, ?, 1)"
+                "INSERT INTO changes (calendar_id, href, sync_rev, deleted, changed_at)"
+                " VALUES (?, ?, ?, 1, ?)"
                 " ON CONFLICT (calendar_id, href) DO UPDATE SET sync_rev = excluded.sync_rev,"
-                " deleted = 1",
-                (calendar_id, href, rev),
+                " deleted = 1, changed_at = excluded.changed_at",
+                (calendar_id, href, rev, utcnow()),
             )
             return rev
 
@@ -676,6 +700,32 @@ class Database:
         conn.execute("UPDATE calendars SET sync_rev = sync_rev + 1 WHERE id = ?", (calendar_id,))
         row = conn.execute("SELECT sync_rev FROM calendars WHERE id = ?", (calendar_id,)).fetchone()
         return int(row["sync_rev"]) if row else 1
+
+    def purge_changes(self, retention_days: int) -> int:
+        """Forget deletions older than `retention_days`; return how many.
+
+        `changes` keeps one row per href, so live objects cost nothing, but a
+        deleted object leaves its tombstone forever. Dropping old ones raises
+        the calendar's `sync_floor` to the newest revision dropped: a client
+        whose token is older could miss a deletion, so it is told its token is
+        invalid (RFC 6578 §3.2) and starts a full sync — slower, never wrong.
+        """
+        if retention_days <= 0:
+            return 0
+        limite = (datetime.now(UTC) - timedelta(days=retention_days)).replace(microsecond=0)
+        seuil = limite.isoformat()
+        with transaction(self.conn) as conn:
+            for row in conn.execute(
+                "SELECT calendar_id, MAX(sync_rev) AS rev FROM changes"
+                " WHERE deleted = 1 AND changed_at < ? GROUP BY calendar_id",
+                (seuil,),
+            ).fetchall():
+                conn.execute(
+                    "UPDATE calendars SET sync_floor = MAX(sync_floor, ?) WHERE id = ?",
+                    (row["rev"], row["calendar_id"]),
+                )
+            cur = conn.execute("DELETE FROM changes WHERE deleted = 1 AND changed_at < ?", (seuil,))
+            return cur.rowcount
 
     def changes_since(self, calendar_id: int, since_rev: int) -> list[sqlite3.Row]:
         return list(

@@ -74,6 +74,167 @@ class BackupTests(ServerTestCase):
         self.assertIn("Sauvegarde écrite", buffer.getvalue())
 
 
+class MaintenanceTests(ServerTestCase):
+    def test_prochaine_echeance(self):
+        from datetime import datetime
+
+        from kalendra.maintenance import prochaine_echeance
+
+        self.assertEqual(
+            prochaine_echeance(datetime(2026, 10, 19, 1, 30), 3), datetime(2026, 10, 19, 3)
+        )
+        self.assertEqual(
+            prochaine_echeance(datetime(2026, 10, 19, 3, 0), 3), datetime(2026, 10, 20, 3)
+        )
+        self.assertEqual(
+            prochaine_echeance(datetime(2026, 12, 31, 23, 0), 3), datetime(2027, 1, 1, 3)
+        )
+
+    def test_rotation_ne_touche_que_ses_fichiers(self):
+        from datetime import datetime, timedelta
+
+        from kalendra.maintenance import sauvegarder
+
+        dossier = os.path.join(self.tmp, "sauvegardes")
+        os.makedirs(dossier)
+        with open(os.path.join(dossier, "a-garder.txt"), "w") as handle:
+            handle.write("pas une sauvegarde")
+        debut = datetime(2026, 10, 1, 3)
+        for jour in range(5):
+            sauvegarder(self.db, dossier, garder=3, maintenant=debut + timedelta(days=jour))
+        fichiers = sorted(os.listdir(dossier))
+        self.assertEqual(
+            fichiers,
+            [
+                "a-garder.txt",
+                "kalendra-20261003-030000.db",
+                "kalendra-20261004-030000.db",
+                "kalendra-20261005-030000.db",
+            ],
+        )
+
+    def test_entretien_complet(self):
+        from kalendra.maintenance import entretien
+
+        self.config.backup_dir = os.path.join(self.tmp, "auto")
+        self.config.sync_retention_days = 90
+        self.client.put(f"{PERSO}a.ics", make_event(uid="a"))
+        self.client.request("DELETE", f"{PERSO}a.ics")
+        self.db.conn.execute("UPDATE changes SET changed_at = datetime('now', '-200 days')")
+        etat = entretien(self.db, self.config)
+        self.assertEqual(etat.erreurs, [])
+        self.assertEqual(etat.tombes_purgees, 1)
+        self.assertIsNotNone(etat.derniere_sauvegarde)
+        self.assertEqual(len(os.listdir(self.config.backup_dir)), 1)
+
+    def test_un_echec_est_consigne_sans_lever(self):
+        from kalendra.maintenance import entretien
+
+        # A file where the directory should be: the backup cannot be written.
+        bloque = os.path.join(self.tmp, "fichier")
+        with open(bloque, "w") as handle:
+            handle.write("x")
+        self.config.backup_dir = bloque
+        with self.assertLogs("kalendra.maintenance", "ERROR"):
+            etat = entretien(self.db, self.config)
+        self.assertEqual(etat.echecs_sauvegarde, 1)
+        self.assertIsNone(etat.derniere_sauvegarde)
+        self.assertTrue(etat.erreurs)
+
+    def test_cli(self):
+        dossier = os.path.join(self.tmp, "cli")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(["--db", self.config.db_path, "maintenance", "--backup-dir", dossier])
+        self.assertEqual(code, 0)
+        self.assertIn("Sauvegarde : faite", buffer.getvalue())
+        self.assertEqual(len(os.listdir(dossier)), 1)
+
+    def test_le_fil_ne_demarre_quune_fois(self):
+        self.config.maintenance_hour = 3
+        self.app.start_maintenance()
+        premier = self.app._planificateur
+        self.app.start_maintenance()
+        try:
+            self.assertIs(self.app._planificateur, premier)
+            self.assertTrue(premier.is_alive())
+            self.assertTrue(premier.daemon)
+        finally:
+            premier.arreter()
+            premier.join(timeout=5)
+        self.assertFalse(premier.is_alive())
+
+
+class MetricsTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.config.metrics = True
+
+    def scrape(self, headers=None) -> str:
+        result = self.anon.request("GET", "/metrics", headers=headers)
+        self.assertStatus(result, 200)
+        self.assertTrue(result.header("content-type").startswith("text/plain; version=0.0.4"))
+        return result.text
+
+    def valeur(self, texte: str, ligne: str) -> float:
+        for brute in texte.splitlines():
+            if brute.startswith(ligne + " "):
+                return float(brute.rsplit(" ", 1)[1])
+        raise AssertionError(f"{ligne} absent")
+
+    def test_desactive_par_defaut(self):
+        self.config.metrics = False
+        self.assertStatus(self.anon.request("GET", "/metrics"), 404)
+
+    def test_requetes_et_echecs_comptes(self):
+        self.client.propfind(PERSO, "", depth="0")
+        self.client.propfind(PERSO, "", depth="0")
+        Client(self.app, "will", "faux").request("PROPFIND", PERSO)
+        texte = self.scrape()
+        self.assertEqual(
+            self.valeur(texte, 'kalendra_requests_total{method="PROPFIND",status="207"}'), 2
+        )
+        self.assertEqual(self.valeur(texte, "kalendra_auth_failures_total"), 1)
+        self.assertEqual(self.valeur(texte, 'kalendra_collections{kind="calendar"}'), 2)
+        self.assertGreater(self.valeur(texte, "kalendra_database_size_bytes"), 0)
+        self.assertIn('kalendra_request_duration_seconds_bucket{le="+Inf"}', texte)
+
+    def test_methodes_inconnues_regroupees(self):
+        # One series per invented verb would let any client grow the series
+        # count without bound.
+        for verbe in ("FOO", "BAR", "BAZ"):
+            self.client.request(verbe, "/")
+        texte = self.scrape()
+        self.assertNotIn('method="FOO"', texte)
+        self.assertIn('method="OTHER"', texte)
+
+    def test_aucun_nom_de_compte_ni_chemin(self):
+        self.client.propfind(PERSO, "", depth="0")
+        texte = self.scrape()
+        self.assertNotIn("will", texte)
+        self.assertNotIn("/calendars", texte)
+
+    def test_jeton(self):
+        self.config.metrics_token = "s3cr3t-scrape"
+        refus = self.anon.request("GET", "/metrics")
+        self.assertStatus(refus, 401)
+        self.assertIn("Bearer", refus.header("www-authenticate"))
+        self.assertStatus(
+            self.anon.request("GET", "/metrics", headers={"Authorization": "Bearer faux"}), 401
+        )
+        self.scrape({"Authorization": "Bearer s3cr3t-scrape"})
+
+    def test_sauvegarde_exposee_apres_la_premiere(self):
+        self.assertNotIn("kalendra_backup_last_success_timestamp_seconds", self.scrape())
+        from kalendra.maintenance import entretien
+
+        self.config.backup_dir = os.path.join(self.tmp, "auto")
+        entretien(self.db, self.config, self.app.maintenance)
+        self.assertGreater(
+            self.valeur(self.scrape(), "kalendra_backup_last_success_timestamp_seconds"), 0
+        )
+
+
 class ThrottleTests(ServerTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -244,6 +405,38 @@ class AppPasswordTests(ServerTestCase):
             init_db(conn)
             self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             conn.execute("SELECT * FROM app_passwords").fetchall()
+        finally:
+            conn.close()
+
+    def test_migration_dune_base_v4(self):
+        # The changes and calendars tables as v4 created them: no changed_at,
+        # no sync_floor. A tombstone in them must survive the migration dated.
+        chemin = os.path.join(self.tmp, "v4.db")
+        conn = sqlite3.connect(chemin)
+        conn.executescript(
+            "CREATE TABLE changes (id INTEGER PRIMARY KEY, calendar_id INTEGER NOT NULL,"
+            " href TEXT NOT NULL, sync_rev INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,"
+            " UNIQUE (calendar_id, href));"
+            "CREATE TABLE calendars (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,"
+            " kind TEXT NOT NULL DEFAULT 'calendar', name TEXT NOT NULL,"
+            " display_name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',"
+            " color TEXT NOT NULL DEFAULT '#3584e4', sort_order INTEGER NOT NULL DEFAULT 0,"
+            " timezone TEXT NOT NULL DEFAULT '', components TEXT NOT NULL DEFAULT 'VEVENT,VTODO',"
+            " sync_rev INTEGER NOT NULL DEFAULT 1, feed_token TEXT UNIQUE,"
+            " feed_enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);"
+            "INSERT INTO changes (calendar_id, href, sync_rev, deleted) VALUES (1, 'x.ics', 3, 1);"
+            "PRAGMA user_version = 4;"
+        )
+        conn.close()
+        from kalendra.db import connect, init_db
+
+        conn = connect(chemin)
+        try:
+            init_db(conn)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
+            date = conn.execute("SELECT changed_at FROM changes").fetchone()[0]
+            self.assertIsNotNone(date)
+            self.assertEqual(conn.execute("SELECT sync_floor FROM calendars").fetchall(), [])
         finally:
             conn.close()
 

@@ -325,9 +325,14 @@ def parse_sync_token(token: str, calendar) -> int | None:
     if not token.startswith(prefix):
         return None
     try:
-        return int(token[len(prefix) :])
+        rev = int(token[len(prefix) :])
     except ValueError:
         return None
+    # Below the floor, deletions may have been purged: answering would let the
+    # client keep objects that no longer exist. Refused, it resyncs in full.
+    if rev < int(calendar["sync_floor"] or 0):
+        return None
+    return rev
 
 
 HANDLERS = {

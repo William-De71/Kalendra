@@ -25,6 +25,8 @@ from .dav import DavHandler
 from .db import Database
 from .feed import handle_feed
 from .http import Request, Response, error, for_log, text_response
+from .maintenance import EtatEntretien, Planificateur
+from .metrics import Metriques
 from .security import csrf_token, verify_password
 
 logger = logging.getLogger("kalendra")
@@ -44,22 +46,26 @@ class _AuthCache:
 
     PBKDF2 deliberately costs ~100 ms, yet a CalDAV client queries the server in
     bursts (PROPFIND, REPORT, multiget and so on). So the HMAC digest of the
-    username/password pair is kept for a short while. A password change takes
-    effect after that delay at the latest.
+    username/password pair is kept for a short while.
+
+    Each entry also remembers the account's password digest as it was when
+    verified: a hit whose digest no longer matches is refused, so a password
+    change — from the account page, the admin UI or the CLI — takes effect on
+    the very next request rather than when the entry expires.
     """
 
     def __init__(self, ttl: int, capacity: int = 512) -> None:
         self.ttl = ttl
         self.capacity = capacity
-        self._entries: dict[str, tuple[float, int, int | None]] = {}
+        self._entries: dict[str, tuple[float, int, int | None, str]] = {}
         self._lock = threading.Lock()
 
     def _key(self, secret: str, username: str, password: str) -> str:
         payload = f"{username}\0{password}".encode()
         return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
-    def get(self, secret: str, username: str, password: str) -> tuple[int, int | None] | None:
-        """Return (user id, app password id or None) for fresh credentials."""
+    def get(self, secret: str, username: str, password: str) -> tuple[int, int | None, str] | None:
+        """Return (user id, app password id or None, password digest) if fresh."""
         if self.ttl <= 0:
             return None
         key = self._key(secret, username, password)
@@ -68,14 +74,20 @@ class _AuthCache:
             entry = self._entries.get(key)
             if entry is None:
                 return None
-            expires, user_id, app_id = entry
+            expires, user_id, app_id, digest = entry
             if expires < now:
                 self._entries.pop(key, None)
                 return None
-            return user_id, app_id
+            return user_id, app_id, digest
 
     def store(
-        self, secret: str, username: str, password: str, user_id: int, app_id: int | None = None
+        self,
+        secret: str,
+        username: str,
+        password: str,
+        user_id: int,
+        app_id: int | None = None,
+        digest: str = "",
     ) -> None:
         if self.ttl <= 0:
             return
@@ -83,7 +95,7 @@ class _AuthCache:
         with self._lock:
             if len(self._entries) >= self.capacity:
                 self._entries.clear()
-            self._entries[key] = (time.monotonic() + self.ttl, user_id, app_id)
+            self._entries[key] = (time.monotonic() + self.ttl, user_id, app_id, digest)
 
     def clear(self) -> None:
         with self._lock:
@@ -199,7 +211,28 @@ class Kalendra:
         self.throttle = _LoginThrottle(
             self.config.auth_max_failures, self.config.auth_lockout_seconds
         )
+        self.maintenance = EtatEntretien()
+        self.metrics = Metriques()
+        self._planificateur: Planificateur | None = None
         self._bootstrap()
+
+    def start_maintenance(self) -> None:
+        """Start the daily maintenance thread; idempotent.
+
+        Called by the server entry points only, never by the constructor: the
+        test suite and the CLI build applications that must not spawn it.
+        """
+        if self._planificateur is None:
+            self._planificateur = Planificateur(self.db, self.config, self.maintenance)
+            self._planificateur.start()
+            logger.info(
+                "maintenance quotidienne à %02d h : sauvegarde %s, purge du journal %s",
+                self.config.maintenance_hour % 24,
+                f"dans {self.config.backup_dir}" if self.config.backup_dir else "désactivée",
+                f"après {self.config.sync_retention_days} j"
+                if self.config.sync_retention_days > 0
+                else "désactivée",
+            )
 
     # ------------------------------------------------------------- démarrage
 
@@ -230,6 +263,7 @@ class Kalendra:
             status = response.status
             return response
         finally:
+            self.metrics.requete(method, status, time.perf_counter() - started)
             if self.config.access_log:
                 self._log_access(request, method, path, status, started)
 
@@ -259,6 +293,11 @@ class Kalendra:
             path = path[len(base) :] or "/"
         request.path = path
 
+        # Outside Basic authentication, like /health: a scraper presents a
+        # bearer token, if any, never an account's credentials.
+        if path == "/metrics":
+            return self._metrics(request)
+
         if path in {"/health", "/healthz"}:
             payload = json.dumps(
                 {"status": "ok", "version": __version__, "users": self.db.count_users()}
@@ -283,6 +322,7 @@ class Kalendra:
         address = client_ip(request, self.config.trust_proxy)
         user = self._authenticate(request, address)
         if user is _THROTTLED:
+            self.metrics.blocage()
             wait = self.throttle.retry_after(address)
             return error(429, "Trop d'échecs d'authentification : réessayez plus tard.").header(
                 "Retry-After", str(wait)
@@ -320,6 +360,19 @@ class Kalendra:
 
         return DavHandler(self.db, self.config, user).handle(request, segments)
 
+    def _metrics(self, request: Request) -> Response:
+        if not self.config.metrics:
+            return error(404, "Métriques désactivées.")
+        attendu = self.config.metrics_token
+        if attendu:
+            fourni = request.header("authorization")
+            if not hmac.compare_digest(fourni.encode(), f"Bearer {attendu}".encode()):
+                return error(401, "Jeton de métriques requis.").header(
+                    "WWW-Authenticate", 'Bearer realm="kalendra-metrics"'
+                )
+        corps = self.metrics.exposer(self.db, self.config, self.maintenance)
+        return text_response(200, corps, "text/plain; version=0.0.4; charset=utf-8")
+
     # -------------------------------------------------------- authentification
 
     def _authenticate(self, request: Request, address: str = ""):
@@ -340,12 +393,16 @@ class Kalendra:
             # Checked before the lockout: a cache hit proves the password was
             # right a moment ago, so a family member behind the same address as
             # an attacker keeps working.
-            user_id, app_id = cached
+            user_id, app_id, digest = cached
             user = self.db.get_user_by_id(user_id)
             # A revoked app password must stop working now, not when the cache
-            # entry expires: one indexed lookup is cheap next to PBKDF2.
-            revoked = app_id is not None and self.db.get_app_password(app_id) is None
-            if user is not None and user["username"] == username and not revoked:
+            # entry expires: one indexed lookup is cheap next to PBKDF2. The
+            # same goes for an account password that has since been changed.
+            if app_id is not None:
+                stale = self.db.get_app_password(app_id) is None
+            else:
+                stale = user is None or user["password_hash"] != digest
+            if user is not None and user["username"] == username and not stale:
                 request.via_app_password = app_id is not None
                 return user
 
@@ -357,6 +414,7 @@ class Kalendra:
         if user is None:
             verify_password(password, DUMMY_HASH)
             self.throttle.failure(address)
+            self.metrics.echec_auth()
             return None
 
         # App passwords first: a SHA-256 lookup, where the account password
@@ -372,9 +430,12 @@ class Kalendra:
 
         if not verify_password(password, user["password_hash"]):
             self.throttle.failure(address)
+            self.metrics.echec_auth()
             return None
         self.throttle.success(address)
-        self.auth_cache.store(secret, username, password, int(user["id"]))
+        self.auth_cache.store(
+            secret, username, password, int(user["id"]), digest=user["password_hash"]
+        )
         return user
 
     @staticmethod

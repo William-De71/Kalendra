@@ -5,7 +5,7 @@ from __future__ import annotations
 import plistlib
 import re
 import unittest
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode
 
 from helpers import Client, ServerTestCase
 from kalendra.security import csrf_token
@@ -84,6 +84,66 @@ class AccountPageTests(ServerTestCase):
         self.config.quota_bytes = 10 * 1024 * 1024
         page = self.alice.request("GET", COMPTE).text
         self.assertIn("utilisés sur 10,0 Mo", page)
+
+
+class PasswordChangeTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.csrf = csrf_token(self.db.secret_key(), "alice")
+
+    def changer(self, ancien: str, nouveau: str, confirmation: str | None = None, csrf=None):
+        payload = {
+            "csrf": self.csrf if csrf is None else csrf,
+            "action": "mot_de_passe",
+            "ancien": ancien,
+            "nouveau": nouveau,
+            "confirmation": nouveau if confirmation is None else confirmation,
+        }
+        return self.alice.request(
+            "POST",
+            COMPTE,
+            urlencode(payload).encode(),
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    def test_changement_effectif_tout_de_suite(self):
+        # Warm the credential cache first: the change must beat it.
+        self.assertStatus(self.alice.propfind("/", "", "0"), 207)
+        result = self.changer("hunter2", "nouveau-secret")
+        self.assertStatus(result, 200)
+        self.assertIn("Mot de passe changé", result.text)
+        self.assertStatus(self.alice.propfind("/", "", "0"), 401)
+        nouveau = Client(self.app, "alice", "nouveau-secret")
+        self.assertStatus(nouveau.propfind("/", "", "0"), 207)
+
+    def test_mot_de_passe_actuel_exige(self):
+        result = self.changer("faux", "nouveau-secret")
+        self.assertStatus(result, 303)
+        self.assertIn("incorrect", unquote(result.header("location")))
+        self.assertStatus(self.alice.propfind("/", "", "0"), 207)
+
+    def test_confirmation_differente(self):
+        self.assertStatus(self.changer("hunter2", "nouveau-secret", "autre-chose"), 303)
+        self.assertStatus(self.alice.propfind("/", "", "0"), 207)
+
+    def test_trop_court(self):
+        result = self.changer("hunter2", "court")
+        self.assertIn("8 caract", unquote(result.header("location")))
+        self.assertStatus(self.alice.propfind("/", "", "0"), 207)
+
+    def test_jeton_csrf_obligatoire(self):
+        self.assertStatus(self.changer("hunter2", "nouveau-secret", csrf="faux"), 403)
+        self.assertStatus(self.alice.propfind("/", "", "0"), 207)
+
+    def test_les_mots_de_passe_dapplication_survivent(self):
+        _, secret = self.db.create_app_password(self.alice_id, "téléphone")
+        self.changer("hunter2", "nouveau-secret")
+        self.assertStatus(Client(self.app, "alice", secret).propfind("/", "", "0"), 207)
+
+    def test_changement_par_ladministrateur_aussi_immediat(self):
+        self.assertStatus(self.alice.propfind("/", "", "0"), 207)
+        self.db.set_password(self.alice_id, "par-ladmin")
+        self.assertStatus(self.alice.propfind("/", "", "0"), 401)
 
 
 class AppleProfileTests(ServerTestCase):

@@ -144,6 +144,7 @@ def make_server(application: Kalendra, host: str, port: int) -> KalendraServer:
 def serve(application: Kalendra, host: str, port: int) -> None:
     """Start the server and block until interrupted."""
     httpd = make_server(application, host, port)
+    application.start_maintenance()
     logger.info("écoute sur http://%s:%s%s/", host, port, application.config.base_path)
     try:
         httpd.serve_forever(poll_interval=0.5)

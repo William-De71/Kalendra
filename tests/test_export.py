@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import unittest
+import zipfile
 
 from helpers import ServerTestCase, make_card, make_event
 from kalendra.importvcf import importer_cartes, split_vcards
@@ -178,6 +180,55 @@ class CliExportTests(ServerTestCase):
         export = self.run_cli("addressbook", "export", "will", "amis")
         # Stored as uploaded, lower-case header included.
         self.assertEqual(export.upper().count("BEGIN:VCARD"), 2)
+
+
+class AccountExportTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.client.put(f"{PERSO}a.ics", make_event(uid="a"))
+        self.db.create_calendar(self.will_id, "vacances")
+        self.db.create_addressbook(self.will_id, "amis")
+        self.client.request(
+            "PUT", f"{CARNET}c.vcf", make_card(uid="c"), {"Content-Type": "text/vcard"}
+        )
+
+    def archive(self, client) -> zipfile.ZipFile:
+        result = client.request("GET", "/view/compte/?export=zip")
+        self.assertStatus(result, 200)
+        self.assertEqual(result.header("content-type"), "application/zip")
+        return zipfile.ZipFile(io.BytesIO(result.body))
+
+    def test_contenu_de_larchive(self):
+        archive = self.archive(self.client)
+        self.assertEqual(
+            sorted(archive.namelist()),
+            ["LISEZMOI.txt", "agendas/perso.ics", "agendas/vacances.ics", "contacts/amis.vcf"],
+        )
+        self.assertIn("UID:a", archive.read("agendas/perso.ics").decode())
+        self.assertIn("UID:c", archive.read("contacts/amis.vcf").decode())
+        self.assertIsNone(archive.testzip())
+
+    def test_uniquement_son_propre_compte(self):
+        # Even an administrator exports only their own account from here.
+        noms = self.archive(self.alice).namelist()
+        self.assertIn("agendas/boulot.ics", noms)
+        self.assertNotIn("agendas/perso.ics", noms)
+
+    def test_lien_sur_la_page_compte(self):
+        self.assertIn("?export=zip", self.client.request("GET", "/view/compte/").text)
+
+    def test_cli(self):
+        import os
+        from contextlib import redirect_stdout
+
+        from kalendra.cli import main
+
+        cible = os.path.join(self.tmp, "will.zip")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(["--db", self.config.db_path, "user", "export", "will", "-o", cible]), 0
+            )
+        self.assertIn("agendas/perso.ics", zipfile.ZipFile(cible).namelist())
 
 
 if __name__ == "__main__":

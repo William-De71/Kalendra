@@ -490,6 +490,46 @@ class SyncTests(ServerTestCase):
         self.assertEqual(found, [f"{PERSO}a.ics"])
         self.assertIn("404", text)
 
+    def _vieillir_les_suppressions(self, jours: int) -> None:
+        self.db.conn.execute(
+            "UPDATE changes SET changed_at = datetime('now', ?) WHERE deleted = 1",
+            (f"-{jours} days",),
+        )
+
+    def test_purge_des_suppressions_anciennes(self):
+        self.client.put(f"{PERSO}a.ics", make_event(uid="a"))
+        self.client.put(f"{PERSO}b.ics", make_event(uid="b"))
+        _, ancien, _ = self._sync()
+        self.client.request("DELETE", f"{PERSO}a.ics")
+        self._vieillir_les_suppressions(100)
+        self.assertEqual(self.db.purge_changes(90), 1)
+        # Only the tombstone went: the live object still has its change row.
+        restantes = self.db.conn.execute("SELECT href FROM changes").fetchall()
+        self.assertEqual([r[0] for r in restantes], ["b.ics"])
+        # A token older than the purge could miss that deletion: refused,
+        # the client falls back to a full sync, which still works.
+        refus = self.client.report(PERSO, self.SYNC.format(token=ancien))
+        self.assertStatus(refus, 403)
+        self.assertIn("valid-sync-token", refus.text)
+        found, recent, _ = self._sync()
+        self.assertEqual(found, [f"{PERSO}b.ics"])
+        self.assertEqual(self._sync(recent)[0], [])
+
+    def test_suppressions_recentes_conservees(self):
+        self.client.put(f"{PERSO}a.ics", make_event(uid="a"))
+        _, token, _ = self._sync()
+        self.client.request("DELETE", f"{PERSO}a.ics")
+        self.assertEqual(self.db.purge_changes(90), 0)
+        found, _, text = self._sync(token)
+        self.assertEqual(found, [f"{PERSO}a.ics"])
+        self.assertIn("404", text)
+
+    def test_purge_desactivee(self):
+        self.client.put(f"{PERSO}a.ics", make_event(uid="a"))
+        self.client.request("DELETE", f"{PERSO}a.ics")
+        self._vieillir_les_suppressions(1000)
+        self.assertEqual(self.db.purge_changes(0), 0)
+
     def test_jeton_invalide_refuse(self):
         result = self.client.report(PERSO, self.SYNC.format(token="urn:autre:1"))
         self.assertStatus(result, 403)

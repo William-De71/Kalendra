@@ -86,6 +86,26 @@ def cmd_backup(args) -> int:
     return 0
 
 
+def cmd_maintenance(args) -> int:
+    from .maintenance import entretien
+
+    config = Config.from_env()
+    if args.db:
+        config.db_path = args.db
+    if args.backup_dir:
+        config.backup_dir = args.backup_dir
+    db = _database(args)
+    etat = entretien(db, config)
+    print(f"Suppressions oubliées du journal de synchronisation : {etat.tombes_purgees}")
+    if config.backup_dir:
+        print("Sauvegarde : " + ("faite" if etat.derniere_sauvegarde else "échouée"))
+    else:
+        print("Sauvegarde : aucun dossier (KALENDRA_BACKUP_DIR ou --backup-dir)")
+    for erreur in etat.erreurs:
+        print(f"  {erreur}", file=sys.stderr)
+    return 1 if etat.erreurs else 0
+
+
 def cmd_user_add(args) -> int:
     db = _database(args)
     password = _ask_password(args.password)
@@ -120,6 +140,20 @@ def cmd_user_passwd(args) -> int:
         raise SystemExit(f"Utilisateur inconnu : {args.username}")
     db.set_password(user["id"], _ask_password(args.password))
     print("Mot de passe mis à jour.")
+    return 0
+
+
+def cmd_user_export(args) -> int:
+    from .export import export_account
+
+    db = _database(args)
+    user = _user_or_exit(db, args.username)
+    destination = args.output or f"kalendra-{args.username}.zip"
+    if os.path.exists(destination):
+        raise SystemExit(f"Le fichier existe déjà : {destination}")
+    with open(destination, "wb") as handle:
+        handle.write(export_account(db, user))
+    print(f"Export écrit : {destination}")
     return 0
 
 
@@ -370,6 +404,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backup.set_defaults(func=cmd_backup)
 
+    maint = sub.add_parser(
+        "maintenance", help="purge du journal de synchro et sauvegarde, comme chaque nuit"
+    )
+    maint.add_argument("--backup-dir", help="dossier de sauvegarde (défaut : $KALENDRA_BACKUP_DIR)")
+    maint.set_defaults(func=cmd_maintenance)
+
     user = sub.add_parser("user", help="gestion des comptes").add_subparsers(
         dest="user_command", required=True
     )
@@ -389,6 +429,11 @@ def build_parser() -> argparse.ArgumentParser:
     passwd.add_argument("username")
     passwd.add_argument("--password")
     passwd.set_defaults(func=cmd_user_passwd)
+
+    exp = user.add_parser("export", help="tous les agendas et carnets dans un .zip")
+    exp.add_argument("username")
+    exp.add_argument("-o", "--output", help="fichier .zip (défaut : kalendra-<compte>.zip)")
+    exp.set_defaults(func=cmd_user_export)
 
     remove = user.add_parser("rm")
     remove.add_argument("username")

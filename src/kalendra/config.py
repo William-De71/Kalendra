@@ -58,6 +58,28 @@ class Config:
     #: 0 means unlimited.
     quota_bytes: int = field(default_factory=lambda: _int("KALENDRA_QUOTA_BYTES", 0))
 
+    #: Days a deleted object's sync tombstone is kept; 0 keeps them forever.
+    #: A client offline for longer does a full resync instead of a delta.
+    sync_retention_days: int = field(
+        default_factory=lambda: _int("KALENDRA_SYNC_RETENTION_DAYS", 90)
+    )
+
+    #: Directory for the daily automatic backup; empty disables it.
+    backup_dir: str = field(default_factory=lambda: os.environ.get("KALENDRA_BACKUP_DIR", ""))
+
+    #: Automatic backups kept in that directory; 0 keeps them all.
+    backup_keep: int = field(default_factory=lambda: _int("KALENDRA_BACKUP_KEEP", 7))
+
+    #: Local hour (0-23, server TZ) of the daily maintenance pass.
+    maintenance_hour: int = field(default_factory=lambda: _int("KALENDRA_MAINTENANCE_HOUR", 3))
+
+    #: Serves Prometheus metrics on /metrics (outside Basic authentication).
+    metrics: bool = field(default_factory=lambda: _bool("KALENDRA_METRICS", False))
+
+    #: Bearer token the scraper must present; empty leaves /metrics open,
+    #: which is only sensible on a network the proxy does not expose.
+    metrics_token: str = field(default_factory=lambda: os.environ.get("KALENDRA_METRICS_TOKEN", ""))
+
     #: Enables the web admin interface.
     admin_ui: bool = field(default_factory=lambda: _bool("KALENDRA_ADMIN_UI", True))
 

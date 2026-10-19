@@ -19,8 +19,9 @@ from html import escape
 from urllib.parse import parse_qs, quote, urlsplit
 
 from . import __version__
+from .export import export_account
 from .http import Request, Response, error, text_response
-from .security import csrf_valid
+from .security import csrf_valid, verify_password
 from .webui import BASE_STYLE, public_base_url, rail, titre
 
 STYLE = """
@@ -47,7 +48,8 @@ table.mdp th { text-align:left; color:var(--muted); font-weight:500; font-size:1
 table.mdp td { padding:8px; border-bottom:1px solid var(--line); }
 table.mdp td:last-child { text-align:right; }
 form.ligne { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-form.ligne input[type=text] { font:inherit; padding:7px 10px; border:1px solid var(--line);
+form.ligne input[type=text], form.ligne input[type=password] { font:inherit;
+  padding:7px 10px; border:1px solid var(--line);
   border-radius:8px; background:var(--bg); color:var(--fg); min-width:0; flex:1; }
 button { font:inherit; padding:7px 13px; border-radius:8px; cursor:pointer;
   border:1px solid transparent; background:var(--accent); color:#fff; }
@@ -241,7 +243,27 @@ def rendre_compte(
         "<input type=text name=label maxlength=80 required "
         "placeholder='Nom de l’appareil (téléphone, portable…)'>"
         "<button>Créer</button></form></section>"
+        "<section class=bloc id=mot-de-passe><h2>Mot de passe du compte</h2>"
+        "<p class=muted>Celui qui ouvre cette interface. Le changer déconnecte "
+        "aussitôt les appareils qui l'utilisent ; ceux qui ont un mot de passe "
+        "d'application continuent de synchroniser.</p>"
+        f"<form method=post action='{ici}' class=ligne autocomplete=off>"
+        f"<input type=hidden name=csrf value='{escape(token)}'>"
+        "<input type=hidden name=action value=mot_de_passe>"
+        "<input type=password name=ancien required autocomplete=current-password "
+        "placeholder='Mot de passe actuel'>"
+        f"<input type=password name=nouveau required minlength={LONGUEUR_MIN} "
+        "autocomplete=new-password placeholder='Nouveau mot de passe'>"
+        f"<input type=password name=confirmation required minlength={LONGUEUR_MIN} "
+        "autocomplete=new-password placeholder='Confirmation'>"
+        "<button>Changer</button></form></section>"
         "<section class=bloc><h2>Espace utilisé</h2>" + espace + "</section>"
+        "<section class=bloc><h2>Exporter mes données</h2>"
+        "<p class=muted>Tous vos agendas (.ics) et carnets d'adresses (.vcf) dans "
+        "une seule archive, recopiés tels quels : de quoi changer de serveur ou "
+        "garder une copie.</p>"
+        f"<a class=bouton href='{ici}?export=zip' download>Télécharger l'archive (.zip)</a>"
+        "</section>"
         "</main>"
     )
     return _page("Kalendra — mon compte", corps, config, user_row)
@@ -303,11 +325,28 @@ def profil_apple(config, request: Request, user_row) -> Response:
     )
 
 
+def _export_compte(db, user_row) -> Response:
+    corps = export_account(db, user_row)
+    nom = re.sub(r"[^A-Za-z0-9._-]", "_", user_row["username"])
+    return Response(
+        200,
+        corps,
+        [
+            ("Content-Type", "application/zip"),
+            ("Content-Length", str(len(corps))),
+            ("Content-Disposition", f'attachment; filename="kalendra-{nom}.zip"'),
+            ("Cache-Control", "private, no-store"),
+        ],
+    )
+
+
 def handle_account(db, config, request: Request, token: str) -> Response:
     user_row = request.user
     if request.method in {"GET", "HEAD"}:
         if request.query_param("profil") == "apple":
             return profil_apple(config, request, user_row)
+        if request.query_param("export") == "zip":
+            return _export_compte(db, user_row)
         return rendre_compte(
             db, config, request, user_row, token, message=request.query_param("msg")
         )
@@ -330,6 +369,8 @@ def handle_account(db, config, request: Request, token: str) -> Response:
         # Answered directly rather than redirected: the secret must not travel
         # in a URL, where history and logs would keep it.
         return rendre_compte(db, config, request, user_row, token, secret=(libelle, secret))
+    if action == "mot_de_passe":
+        return _changer_mot_de_passe(db, config, request, user_row, token, champs)
     if action == "revoquer":
         try:
             ident = int(champs.get("id", ""))
@@ -341,6 +382,46 @@ def handle_account(db, config, request: Request, token: str) -> Response:
     return error(400, "Action inconnue.")
 
 
-def _rediriger(config, message: str) -> Response:
-    cible = f"{config.base_path}/view/compte/?msg={quote(message)}#mots-de-passe"
+#: Only enforced here, where the person picks their own password; accounts
+#: created by an administrator keep whatever policy that administrator applies.
+LONGUEUR_MIN = 8
+
+
+def _changer_mot_de_passe(
+    db, config, request: Request, user_row, token: str, champs: dict[str, str]
+) -> Response:
+    """Change the account password, the current one being required.
+
+    Asking for it again guards against a browser left open: Basic credentials
+    are replayed silently, so being logged in proves little about who sits at
+    the keyboard.
+    """
+    ancien = champs.get("ancien", "")
+    nouveau = champs.get("nouveau", "")
+    if not verify_password(ancien, user_row["password_hash"]):
+        return _rediriger(config, "Mot de passe actuel incorrect.", "mot-de-passe")
+    if nouveau != champs.get("confirmation", ""):
+        return _rediriger(config, "Les deux saisies ne correspondent pas.", "mot-de-passe")
+    if len(nouveau) < LONGUEUR_MIN:
+        return _rediriger(
+            config, f"Au moins {LONGUEUR_MIN} caractères, s'il vous plaît.", "mot-de-passe"
+        )
+    if nouveau == ancien:
+        return _rediriger(config, "Le nouveau mot de passe est identique.", "mot-de-passe")
+    db.set_password(user_row["id"], nouveau)
+    # Answered in place rather than redirected: the browser still holds the
+    # old credentials, and the next request will prompt for the new ones —
+    # this page is the last chance to say why.
+    return rendre_compte(
+        db,
+        config,
+        request,
+        db.get_user_by_id(user_row["id"]),
+        token,
+        message="Mot de passe changé. Votre navigateur va vous demander le nouveau.",
+    )
+
+
+def _rediriger(config, message: str, ancre: str = "mots-de-passe") -> Response:
+    cible = f"{config.base_path}/view/compte/?msg={quote(message)}#{ancre}"
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
