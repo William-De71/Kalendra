@@ -73,6 +73,13 @@ class Config:
     #: Local hour (0-23, server TZ) of the daily maintenance pass.
     maintenance_hour: int = field(default_factory=lambda: _int("KALENDRA_MAINTENANCE_HOUR", 3))
 
+    #: Serves Prometheus metrics on /metrics (outside Basic authentication).
+    metrics: bool = field(default_factory=lambda: _bool("KALENDRA_METRICS", False))
+
+    #: Bearer token the scraper must present; empty leaves /metrics open,
+    #: which is only sensible on a network the proxy does not expose.
+    metrics_token: str = field(default_factory=lambda: os.environ.get("KALENDRA_METRICS_TOKEN", ""))
+
     #: Enables the web admin interface.
     admin_ui: bool = field(default_factory=lambda: _bool("KALENDRA_ADMIN_UI", True))
 

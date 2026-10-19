@@ -26,6 +26,7 @@ from .db import Database
 from .feed import handle_feed
 from .http import Request, Response, error, for_log, text_response
 from .maintenance import EtatEntretien, Planificateur
+from .metrics import Metriques
 from .security import csrf_token, verify_password
 
 logger = logging.getLogger("kalendra")
@@ -211,6 +212,7 @@ class Kalendra:
             self.config.auth_max_failures, self.config.auth_lockout_seconds
         )
         self.maintenance = EtatEntretien()
+        self.metrics = Metriques()
         self._planificateur: Planificateur | None = None
         self._bootstrap()
 
@@ -261,6 +263,7 @@ class Kalendra:
             status = response.status
             return response
         finally:
+            self.metrics.requete(method, status, time.perf_counter() - started)
             if self.config.access_log:
                 self._log_access(request, method, path, status, started)
 
@@ -290,6 +293,11 @@ class Kalendra:
             path = path[len(base) :] or "/"
         request.path = path
 
+        # Outside Basic authentication, like /health: a scraper presents a
+        # bearer token, if any, never an account's credentials.
+        if path == "/metrics":
+            return self._metrics(request)
+
         if path in {"/health", "/healthz"}:
             payload = json.dumps(
                 {"status": "ok", "version": __version__, "users": self.db.count_users()}
@@ -314,6 +322,7 @@ class Kalendra:
         address = client_ip(request, self.config.trust_proxy)
         user = self._authenticate(request, address)
         if user is _THROTTLED:
+            self.metrics.blocage()
             wait = self.throttle.retry_after(address)
             return error(429, "Trop d'échecs d'authentification : réessayez plus tard.").header(
                 "Retry-After", str(wait)
@@ -350,6 +359,19 @@ class Kalendra:
             return Response(302, b"", [("Location", target), ("Content-Length", "0")])
 
         return DavHandler(self.db, self.config, user).handle(request, segments)
+
+    def _metrics(self, request: Request) -> Response:
+        if not self.config.metrics:
+            return error(404, "Métriques désactivées.")
+        attendu = self.config.metrics_token
+        if attendu:
+            fourni = request.header("authorization")
+            if not hmac.compare_digest(fourni.encode(), f"Bearer {attendu}".encode()):
+                return error(401, "Jeton de métriques requis.").header(
+                    "WWW-Authenticate", 'Bearer realm="kalendra-metrics"'
+                )
+        corps = self.metrics.exposer(self.db, self.config, self.maintenance)
+        return text_response(200, corps, "text/plain; version=0.0.4; charset=utf-8")
 
     # -------------------------------------------------------- authentification
 
@@ -392,6 +414,7 @@ class Kalendra:
         if user is None:
             verify_password(password, DUMMY_HASH)
             self.throttle.failure(address)
+            self.metrics.echec_auth()
             return None
 
         # App passwords first: a SHA-256 lookup, where the account password
@@ -407,6 +430,7 @@ class Kalendra:
 
         if not verify_password(password, user["password_hash"]):
             self.throttle.failure(address)
+            self.metrics.echec_auth()
             return None
         self.throttle.success(address)
         self.auth_cache.store(

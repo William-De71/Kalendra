@@ -165,6 +165,76 @@ class MaintenanceTests(ServerTestCase):
         self.assertFalse(premier.is_alive())
 
 
+class MetricsTests(ServerTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.config.metrics = True
+
+    def scrape(self, headers=None) -> str:
+        result = self.anon.request("GET", "/metrics", headers=headers)
+        self.assertStatus(result, 200)
+        self.assertTrue(result.header("content-type").startswith("text/plain; version=0.0.4"))
+        return result.text
+
+    def valeur(self, texte: str, ligne: str) -> float:
+        for brute in texte.splitlines():
+            if brute.startswith(ligne + " "):
+                return float(brute.rsplit(" ", 1)[1])
+        self.fail(f"{ligne} absent")
+
+    def test_desactive_par_defaut(self):
+        self.config.metrics = False
+        self.assertStatus(self.anon.request("GET", "/metrics"), 404)
+
+    def test_requetes_et_echecs_comptes(self):
+        self.client.propfind(PERSO, "", depth="0")
+        self.client.propfind(PERSO, "", depth="0")
+        Client(self.app, "will", "faux").request("PROPFIND", PERSO)
+        texte = self.scrape()
+        self.assertEqual(
+            self.valeur(texte, 'kalendra_requests_total{method="PROPFIND",status="207"}'), 2
+        )
+        self.assertEqual(self.valeur(texte, "kalendra_auth_failures_total"), 1)
+        self.assertEqual(self.valeur(texte, 'kalendra_collections{kind="calendar"}'), 2)
+        self.assertGreater(self.valeur(texte, "kalendra_database_size_bytes"), 0)
+        self.assertIn('kalendra_request_duration_seconds_bucket{le="+Inf"}', texte)
+
+    def test_methodes_inconnues_regroupees(self):
+        # One series per invented verb would let any client grow the series
+        # count without bound.
+        for verbe in ("FOO", "BAR", "BAZ"):
+            self.client.request(verbe, "/")
+        texte = self.scrape()
+        self.assertNotIn('method="FOO"', texte)
+        self.assertIn('method="OTHER"', texte)
+
+    def test_aucun_nom_de_compte_ni_chemin(self):
+        self.client.propfind(PERSO, "", depth="0")
+        texte = self.scrape()
+        self.assertNotIn("will", texte)
+        self.assertNotIn("/calendars", texte)
+
+    def test_jeton(self):
+        self.config.metrics_token = "s3cr3t-scrape"
+        refus = self.anon.request("GET", "/metrics")
+        self.assertStatus(refus, 401)
+        self.assertIn("Bearer", refus.header("www-authenticate"))
+        self.assertStatus(
+            self.anon.request("GET", "/metrics", headers={"Authorization": "Bearer faux"}), 401
+        )
+        self.scrape({"Authorization": "Bearer s3cr3t-scrape"})
+
+    def test_sauvegarde_exposee_apres_la_premiere(self):
+        self.assertNotIn("kalendra_backup_last_success_timestamp_seconds", self.scrape())
+        from kalendra.maintenance import entretien
+
+        self.config.backup_dir = os.path.join(self.tmp, "auto")
+        entretien(self.db, self.config, self.app.maintenance)
+        self.assertGreater(
+            self.valeur(self.scrape(), "kalendra_backup_last_success_timestamp_seconds"), 0
+        )
+
+
 class ThrottleTests(ServerTestCase):
     def setUp(self) -> None:
         super().setUp()
