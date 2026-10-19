@@ -5,6 +5,8 @@ versionnage sémantique.
 
 ## [Non publié]
 
+## [1.3.0] — 2026-10-19
+
 ### Ajouté
 
 - Changement de son propre mot de passe depuis « Mon compte », l'actuel étant
@@ -207,7 +209,8 @@ versionnage sémantique.
   elles ne figurent plus depuis leur déplacement sur la fiche d'un compte. Le
   script s'interrompait silencieusement en annonçant un succès.
 
-[Non publié]: https://github.com/William-De71/Kalendra/compare/v1.2.0...HEAD
+[Non publié]: https://github.com/William-De71/Kalendra/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/William-De71/Kalendra/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/William-De71/Kalendra/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/William-De71/Kalendra/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/William-De71/Kalendra/releases/tag/v1.0.0
