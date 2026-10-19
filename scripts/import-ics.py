@@ -53,9 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--file", help="fichier .ics local")
     source.add_argument("--from-url", help="URL d'un .ics à télécharger d'abord")
-    parser.add_argument(
-        "--create", action="store_true", help="crée l'agenda s'il n'existe pas"
-    )
+    parser.add_argument("--create", action="store_true", help="crée l'agenda s'il n'existe pas")
     parser.add_argument(
         "--prefix", default="", help="préfixe des noms de ressource (défaut : aucun)"
     )
@@ -123,9 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(blocs)} objet(s) seraient déposés dans {agenda}")
         return 0
 
-    print(
-        f"{deposes} créé(s), {inchanges} remplacé(s), {echecs} en échec — {agenda}"
-    )
+    print(f"{deposes} créé(s), {inchanges} remplacé(s), {echecs} en échec — {agenda}")
     return 1 if echecs else 0
 
 

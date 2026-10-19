@@ -45,7 +45,5 @@ def handle_feed(db, config, request: Request, token: str) -> Response:
     response.header("Content-Length", str(len(body)))
     response.header("ETag", etag)
     response.header("Cache-Control", f"public, max-age={config.feed_refresh_minutes * 60}")
-    response.header(
-        "Content-Disposition", f'inline; filename="{calendar["name"]}.ics"'
-    )
+    response.header("Content-Disposition", f'inline; filename="{calendar["name"]}.ics"')
     return response

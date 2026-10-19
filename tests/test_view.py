@@ -73,7 +73,9 @@ class ExpansionTests(unittest.TestCase):
 
     def test_evenement_simple(self):
         data = make_event(uid="s").decode()
-        found = expand_occurrences(data, self._unix("20260301T000000Z"), self._unix("20260401T000000Z"))
+        found = expand_occurrences(
+            data, self._unix("20260301T000000Z"), self._unix("20260401T000000Z")
+        )
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].summary, "Revue archi VCU")
         self.assertFalse(found[0].all_day)
@@ -343,9 +345,7 @@ class FuseauTests(ServerTestCase):
                 b"END:VEVENT\r\nEND:VCALENDAR\r\n"
             ),
         )
-        html = self.client.request(
-            "GET", f"{VUE}?m=2026-03", headers={"Accept": "text/html"}
-        ).text
+        html = self.client.request("GET", f"{VUE}?m=2026-03", headers={"Accept": "text/html"}).text
         # 1 March 2026 is a Sunday: the last cell of the first week.
         premiere_semaine = html.split("</tr>")[1]
         self.assertIn("Ferie", premiere_semaine)
@@ -354,13 +354,9 @@ class FuseauTests(ServerTestCase):
     def test_occurrence_du_dernier_jour_du_mois_visible(self):
         self.client.put(
             f"{PERSO}fin.ics",
-            make_event(
-                uid="fin", start="20260331T220000Z", end="20260331T230000Z", summary="Nuit"
-            ),
+            make_event(uid="fin", start="20260331T220000Z", end="20260331T230000Z", summary="Nuit"),
         )
-        html = self.client.request(
-            "GET", f"{VUE}?m=2026-03", headers={"Accept": "text/html"}
-        ).text
+        html = self.client.request("GET", f"{VUE}?m=2026-03", headers={"Accept": "text/html"}).text
         self.assertIn("Nuit", evenements(html))
 
 
@@ -408,9 +404,7 @@ class ImportTests(ServerTestCase):
 
     def test_un_compte_ordinaire_peut_importer(self):
         csrf = self._jeton(self.alice, "/view/alice/boulot/")
-        result = self._televerser(
-            self.alice, "/view/alice/boulot/import", self.FICHIER, csrf
-        )
+        result = self._televerser(self.alice, "/view/alice/boulot/import", self.FICHIER, csrf)
         self.assertStatus(result, 303)
         self.assertIn("2", result.header("location"))
         calendrier = self.db.get_calendar(self.alice_id, "boulot")
@@ -425,7 +419,8 @@ class ImportTests(ServerTestCase):
 
     def test_un_evenement_invalide_nempeche_pas_les_autres(self):
         casse = self.FICHIER.replace(
-            "BEGIN:VEVENT\r\nUID:imp-2", "BEGIN:VEVENT\r\nSUMMARY:sans uid\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:imp-2"
+            "BEGIN:VEVENT\r\nUID:imp-2",
+            "BEGIN:VEVENT\r\nSUMMARY:sans uid\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:imp-2",
         )
         csrf = self._jeton(self.alice, "/view/alice/boulot/")
         result = self._televerser(self.alice, "/view/alice/boulot/import", casse, csrf)
@@ -434,23 +429,17 @@ class ImportTests(ServerTestCase):
         self.assertEqual(self.db.calendar_stats(calendrier["id"]), 2)
 
     def test_jeton_csrf_obligatoire(self):
-        result = self._televerser(
-            self.alice, "/view/alice/boulot/import", self.FICHIER, "faux"
-        )
+        result = self._televerser(self.alice, "/view/alice/boulot/import", self.FICHIER, "faux")
         self.assertStatus(result, 403)
 
     def test_import_dans_lagenda_dun_autre_refuse(self):
         csrf = self._jeton(self.alice, "/view/alice/boulot/")
-        result = self._televerser(
-            self.alice, "/view/will/perso/import", self.FICHIER, csrf
-        )
+        result = self._televerser(self.alice, "/view/will/perso/import", self.FICHIER, csrf)
         self.assertStatus(result, 403)
 
     def test_agenda_inconnu(self):
         csrf = self._jeton(self.alice, "/view/alice/boulot/")
-        result = self._televerser(
-            self.alice, "/view/alice/zzz/import", self.FICHIER, csrf
-        )
+        result = self._televerser(self.alice, "/view/alice/zzz/import", self.FICHIER, csrf)
         self.assertStatus(result, 404)
 
     def test_la_vue_reste_en_lecture_seule_ailleurs(self):
@@ -473,8 +462,7 @@ class GestionAgendaTests(ServerTestCase):
         morceaux = []
         for nom, valeur in champs.items():
             morceaux.append(
-                f"--{limite}\r\n"
-                f'Content-Disposition: form-data; name="{nom}"\r\n\r\n{valeur}\r\n'
+                f'--{limite}\r\nContent-Disposition: form-data; name="{nom}"\r\n\r\n{valeur}\r\n'
             )
         if fichier is not None:
             morceaux.append(
@@ -498,9 +486,7 @@ class GestionAgendaTests(ServerTestCase):
 
     def test_creer_et_importer_en_une_fois(self):
         csrf = self._jeton(self.alice)
-        result = self._creer(
-            self.alice, {"csrf": csrf, "name": "vacances"}, fichier=self.FICHIER
-        )
+        result = self._creer(self.alice, {"csrf": csrf, "name": "vacances"}, fichier=self.FICHIER)
         self.assertStatus(result, 303)
         calendrier = self.db.get_calendar(self.alice_id, "vacances")
         self.assertIsNotNone(calendrier)
@@ -508,9 +494,7 @@ class GestionAgendaTests(ServerTestCase):
 
     def test_un_import_rate_ne_laisse_pas_dagenda_vide(self):
         csrf = self._jeton(self.alice)
-        result = self._creer(
-            self.alice, {"csrf": csrf, "name": "rate"}, fichier="pas du iCalendar"
-        )
+        result = self._creer(self.alice, {"csrf": csrf, "name": "rate"}, fichier="pas du iCalendar")
         self.assertStatus(result, 303)
         self.assertIsNone(self.db.get_calendar(self.alice_id, "rate"))
 
@@ -522,9 +506,7 @@ class GestionAgendaTests(ServerTestCase):
 
     def test_creer_pour_autrui_refuse(self):
         csrf = self._jeton(self.alice)
-        result = self._creer(
-            self.alice, {"csrf": csrf, "name": "pirate", "proprietaire": "will"}
-        )
+        result = self._creer(self.alice, {"csrf": csrf, "name": "pirate", "proprietaire": "will"})
         self.assertStatus(result, 303)
         self.assertIsNone(self.db.get_calendar(self.will_id, "pirate"))
 

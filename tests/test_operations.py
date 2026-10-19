@@ -84,9 +84,7 @@ class ThrottleTests(ServerTestCase):
     def call(self, user: str, password: str, ip: str = "203.0.113.7", headers=None):
         client = Client(self.app, user, password)
         merged = {"authorization": client.auth, **(headers or {})}
-        return self.app.dispatch(
-            Request("PROPFIND", PERSO, headers=merged, remote_addr=ip)
-        )
+        return self.app.dispatch(Request("PROPFIND", PERSO, headers=merged, remote_addr=ip))
 
     def test_blocage_apres_trop_dechecs(self):
         for _ in range(3):

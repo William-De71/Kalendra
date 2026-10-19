@@ -56,7 +56,13 @@ def parse_rrule(value: str) -> dict[str, object]:
             except ValueError:
                 continue
         elif key in {
-            "BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE", "BYSETPOS", "BYYEARDAY", "BYWEEKNO",
+            "BYMONTH",
+            "BYMONTHDAY",
+            "BYHOUR",
+            "BYMINUTE",
+            "BYSETPOS",
+            "BYYEARDAY",
+            "BYWEEKNO",
         }:
             values = []
             for part in raw.split(","):
@@ -169,6 +175,7 @@ def _yearly_days(year: int, rule: dict) -> list[date]:
 
     monthdays = rule.get("BYMONTHDAY")
     if monthdays:
+
         def _allowed(d: date) -> bool:
             last = _month_days(d.year, d.month)
             return d.day in {m if m > 0 else last + m + 1 for m in monthdays}

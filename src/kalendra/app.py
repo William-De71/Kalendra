@@ -34,7 +34,9 @@ REALM = 'Basic realm="Kalendra", charset="UTF-8"'
 
 #: Dummy hash: keeps verification cost identical for a non-existent account,
 #: so response timing never reveals which usernames exist.
-DUMMY_HASH = "pbkdf2_sha256$240000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="  # noqa: E501 (empreinte indivisible)
+DUMMY_HASH = (
+    "pbkdf2_sha256$240000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+)
 
 
 class _AuthCache:
@@ -282,9 +284,9 @@ class Kalendra:
         user = self._authenticate(request, address)
         if user is _THROTTLED:
             wait = self.throttle.retry_after(address)
-            return error(
-                429, "Trop d'échecs d'authentification : réessayez plus tard."
-            ).header("Retry-After", str(wait))
+            return error(429, "Trop d'échecs d'authentification : réessayez plus tard.").header(
+                "Retry-After", str(wait)
+            )
         if user is None:
             return self._challenge()
         request.user = user

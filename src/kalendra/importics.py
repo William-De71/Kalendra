@@ -72,8 +72,7 @@ def importer(db, calendar_row, contenu: str, *, max_taille: int, quota: int = 0)
         return rapport
     if len(blocs) > MAX_COMPOSANTS:
         rapport.erreurs.append(
-            f"Fichier trop volumineux : {len(blocs)} événements, "
-            f"maximum {MAX_COMPOSANTS}."
+            f"Fichier trop volumineux : {len(blocs)} événements, maximum {MAX_COMPOSANTS}."
         )
         return rapport
 
@@ -102,9 +101,7 @@ def importer(db, calendar_row, contenu: str, *, max_taille: int, quota: int = 0)
 
         if composants_admis and meta.component not in composants_admis:
             rapport.ignores += 1
-            rapport.erreurs.append(
-                f"Événement {index} : {meta.component} refusé par cet agenda."
-            )
+            rapport.erreurs.append(f"Événement {index} : {meta.component} refusé par cet agenda.")
             continue
 
         href = _href_pour(meta.uid, index)

@@ -43,9 +43,7 @@ def split_vcards(texte: str) -> list[str]:
     return cartes
 
 
-def importer_cartes(
-    db, carnet_row, contenu: str, *, max_taille: int, quota: int = 0
-) -> Rapport:
+def importer_cartes(db, carnet_row, contenu: str, *, max_taille: int, quota: int = 0) -> Rapport:
     """Store every card of `contenu` into `carnet_row`.
 
     The resource name derives from the UID, so re-importing the same file

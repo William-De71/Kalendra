@@ -229,9 +229,7 @@ def _local(moment_unix: int, tz: timezone | None) -> datetime:
     return moment.astimezone(tz) if tz is not None else moment.astimezone()
 
 
-def remplir(
-    db, calendar_row, semaines: list[list[Jour]], tz: timezone | None
-) -> None:
+def remplir(db, calendar_row, semaines: list[list[Jour]], tz: timezone | None) -> None:
     """Place occurrences into the grid cells.
 
     The queried window overflows by a day on each side: an event may start the
@@ -250,9 +248,7 @@ def remplir(
     for row in db.query_objects(
         calendar_row["id"], components=["VEVENT", "VTODO"], start=borne_debut, end=borne_fin
     ):
-        for occurrence in expand_occurrences(
-            row["data"], borne_debut, borne_fin, href=row["href"]
-        ):
+        for occurrence in expand_occurrences(row["data"], borne_debut, borne_fin, href=row["href"]):
             # A zero-length occurrence still occupies its start day; DTEND
             # being exclusive, step back a second for the last cell.
             dernier = max(occurrence.end - 1, occurrence.start)
@@ -431,9 +427,7 @@ def rendre_mois(
                     f"<a class=reste href='{cible}'>+{reste} autre{'s' if reste > 1 else ''}</a>"
                 )
             attribut = f" class='{' '.join(classes)}'" if classes else ""
-            cellules.append(
-                f"<td{attribut}><div class=numero>{jour.jour.day}</div>{puces}</td>"
-            )
+            cellules.append(f"<td{attribut}><div class=numero>{jour.jour.day}</div>{puces}</td>")
         lignes.append("<tr>" + "".join(cellules) + "</tr>")
 
     entetes = "".join(f"<th>{j[:3]}</th>" for j in JOURS)
@@ -514,8 +508,7 @@ def rendre_semaine(
             vers(lundi + timedelta(days=7)),
         )
         + f"<main><table class='grille semaine'><tr>{entetes}</tr>"
-        f"<tr>{''.join(cellules)}</tr></table></main>"
-        + _pied(total)
+        f"<tr>{''.join(cellules)}</tr></table></main>" + _pied(total)
     )
     titre_agenda = calendar_row["display_name"] or nom
     return _page(f"{titre_agenda} — semaine {periode}", corps, base, admin, connecte)
@@ -577,13 +570,16 @@ def rendre_liste(
         + _pied(total)
     )
     titre_agenda = calendar_row["display_name"] or nom
-    return _page(
-        f"{titre_agenda} — {MOIS[mois - 1]} {annee}", corps, base, admin, connecte
-    )
+    return _page(f"{titre_agenda} — {MOIS[mois - 1]} {annee}", corps, base, admin, connecte)
 
 
 def rendre_index(
-    db, config, user_row, admin: bool, token: str = "", message: str = "",
+    db,
+    config,
+    user_row,
+    admin: bool,
+    token: str = "",
+    message: str = "",
     connecte: str = "",
 ) -> Response:
     base = config.base_path
@@ -689,9 +685,7 @@ def rendre_index(
         + liste(carnets, "contacts/", "contact", "Aucun carnet.")
         + "</main>"
     )
-    return _page(
-        "Kalendra — agendas et carnets", corps, base, admin, connecte
-    )
+    return _page("Kalendra — agendas et carnets", corps, base, admin, connecte)
 
 
 def rendre_carnet(
@@ -758,10 +752,7 @@ def rendre_carnet(
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + "<main><table class=grille style='table-layout:auto'>"
         "<tr><th>Nom</th><th>Courriel</th></tr>"
-        + (
-            "".join(lignes)
-            or "<tr><td colspan=2 class=vide>Ce carnet est vide.</td></tr>"
-        )
+        + ("".join(lignes) or "<tr><td colspan=2 class=vide>Ce carnet est vide.</td></tr>")
         + "</table>"
         + import_form
         + "</main>"
@@ -894,7 +885,10 @@ def rendre_objet(
         for etiquette, valeur in lignes
     )
     retour = _lien_mois(
-        base, user, nom, (debut or datetime.now(UTC)).year,
+        base,
+        user,
+        nom,
+        (debut or datetime.now(UTC)).year,
         (debut or datetime.now(UTC)).month,
     )
 
@@ -972,8 +966,7 @@ def _champs_formulaire(request: Request) -> tuple[dict[str, str], bytes]:
         fichier = brut.pop("fichier", b"")
         return {c: v.decode("utf-8", "replace") for c, v in brut.items()}, fichier
     champs = {
-        cle: valeurs[0]
-        for cle, valeurs in parse_qs(request.text, keep_blank_values=True).items()
+        cle: valeurs[0] for cle, valeurs in parse_qs(request.text, keep_blank_values=True).items()
     }
     return champs, b""
 
@@ -1047,9 +1040,7 @@ def _supprimer_agenda(
     nom = resource.calendar["display_name"] or resource.calendar["name"]
     compte = db.calendar_stats(resource.calendar["id"])
     db.delete_calendar(resource.calendar["id"])
-    return _rediriger_index(
-        config, f"Agenda « {nom} » supprimé ({compte} objet(s) perdus)."
-    )
+    return _rediriger_index(config, f"Agenda « {nom} » supprimé ({compte} objet(s) perdus).")
 
 
 def _telechargement(contenu: str, type_mime: str, nom: str) -> Response:
@@ -1111,8 +1102,7 @@ def _rediriger_index(config, message: str) -> Response:
 
 def _rediriger(config, segments: list[str], message: str) -> Response:
     cible = (
-        f"{config.base_path}/view/{quote(segments[0])}/{quote(segments[1])}/"
-        f"?msg={quote(message)}"
+        f"{config.base_path}/view/{quote(segments[0])}/{quote(segments[1])}/?msg={quote(message)}"
     )
     return Response(303, b"", [("Location", cible), ("Content-Length", "0")])
 
@@ -1146,14 +1136,18 @@ def _vue_contacts(
             f"{resource.calendar['name']}.vcf",
         )
     return rendre_carnet(
-        db, config, resource.calendar, resource.user["username"], admin,
-        user_row["username"], token, request.query_param("msg"),
+        db,
+        config,
+        resource.calendar,
+        resource.user["username"],
+        admin,
+        user_row["username"],
+        token,
+        request.query_param("msg"),
     )
 
 
-def handle_view(
-    db, config, request: Request, segments: list[str], token: str = ""
-) -> Response:
+def handle_view(db, config, request: Request, segments: list[str], token: str = "") -> Response:
     """Entry point: `segments` excludes the `view` prefix."""
     user_row = request.user
     admin = bool(user_row["is_admin"])
@@ -1180,9 +1174,7 @@ def handle_view(
         if segments == ["agendas", "creer"]:
             return _creer_agenda(db, config, request, user_row, admin, token)
         if len(segments) == 3 and segments[2] == "supprimer":
-            return _supprimer_agenda(
-                db, config, request, user_row, admin, segments[:2], token
-            )
+            return _supprimer_agenda(db, config, request, user_row, admin, segments[:2], token)
         return error(405, "Vue en lecture seule.").header("Allow", "GET, HEAD")
 
     if request.method not in {"GET", "HEAD"}:
@@ -1190,7 +1182,12 @@ def handle_view(
 
     if not segments:
         return rendre_index(
-            db, config, user_row, admin, token, request.query_param("msg"),
+            db,
+            config,
+            user_row,
+            admin,
+            token,
+            request.query_param("msg"),
             user_row["username"],
         )
 

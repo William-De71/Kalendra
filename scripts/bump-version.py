@@ -91,11 +91,7 @@ def maj_changelog(texte: str, version: str, aujourdhui: str) -> str:
     suivante = texte.find("\n## [", apres_titre)
     fin = suivante + 1 if suivante >= 0 else len(texte)
 
-    remplacement = (
-        "## [Non publié]\n\n"
-        f"## [{version}] — {aujourdhui}\n\n"
-        f"{contenu}\n\n"
-    )
+    remplacement = f"## [Non publié]\n\n## [{version}] — {aujourdhui}\n\n{contenu}\n\n"
     texte = texte[:debut] + remplacement + texte[fin:]
 
     # Comparison links at the foot of the file: "Unreleased" now starts from
@@ -116,12 +112,12 @@ def maj_changelog(texte: str, version: str, aujourdhui: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "niveau", nargs="?", choices=["patch", "minor", "major"],
+        "niveau",
+        nargs="?",
+        choices=["patch", "minor", "major"],
         help="omis avec --show",
     )
-    parser.add_argument(
-        "--show", action="store_true", help="affiche la version courante et sort"
-    )
+    parser.add_argument("--show", action="store_true", help="affiche la version courante et sort")
     parser.add_argument(
         "--dry-run", action="store_true", help="affiche la version sans rien écrire"
     )
@@ -148,9 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     nouveau_init = VERSION_RE.sub(
         f'__version__ = "{version}"', INIT.read_text(encoding="utf-8"), count=1
     )
-    nouveau_changelog = maj_changelog(
-        CHANGELOG.read_text(encoding="utf-8"), version, aujourdhui
-    )
+    nouveau_changelog = maj_changelog(CHANGELOG.read_text(encoding="utf-8"), version, aujourdhui)
     texte_pyproject = PYPROJECT.read_text(encoding="utf-8")
     if PYPROJECT_RE.search(texte_pyproject) is None:
         raise SystemExit(f"version introuvable ou mal formée dans {PYPROJECT}")

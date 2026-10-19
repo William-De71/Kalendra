@@ -263,9 +263,7 @@ def _getcontenttype(resource: Resource, ctx: PropContext) -> ET.Element | None:
     composant = "vevent"
     if resource.obj is not None and resource.obj["component"]:
         composant = resource.obj["component"].lower()
-    return element(
-        dav("getcontenttype"), f"text/calendar; charset=utf-8; component={composant}"
-    )
+    return element(dav("getcontenttype"), f"text/calendar; charset=utf-8; component={composant}")
 
 
 def _getcontentlength(resource: Resource, ctx: PropContext) -> ET.Element | None:
@@ -399,4 +397,3 @@ def resolve_props(
         else:
             found.append(node)
     return found, missing
-

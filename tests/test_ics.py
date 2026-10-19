@@ -184,33 +184,42 @@ class YearlyByWeekAndDayTests(unittest.TestCase):
 
     def test_lundi_de_la_semaine_20(self):
         self.assertEqual(
-            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO;COUNT=3"),
+            self.dates(
+                datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO;COUNT=3"
+            ),
             ["20260511", "20270517", "20280515"],
         )
 
     def test_la_semaine_1_peut_commencer_en_decembre(self):
         self.assertEqual(
-            self.dates(datetime(2025, 6, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;COUNT=3"),
+            self.dates(
+                datetime(2025, 6, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;COUNT=3"
+            ),
             ["20251229", "20270104", "20280103"],
         )
 
     def test_derniere_semaine_de_lannee(self):
         self.assertEqual(
-            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=-1;BYDAY=FR;COUNT=3"),
+            self.dates(
+                datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=-1;BYDAY=FR;COUNT=3"
+            ),
             ["20270101", "20271231", "20281229"],
         )
 
     def test_wkst_deplace_la_semaine_1(self):
         self.assertEqual(
             self.dates(
-                datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;WKST=SU;COUNT=2"
+                datetime(2026, 1, 1, 9, tzinfo=UTC),
+                "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;WKST=SU;COUNT=2",
             ),
             ["20260105", "20270104"],
         )
 
     def test_jours_de_lannee(self):
         self.assertEqual(
-            self.dates(datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYYEARDAY=1,100,200;COUNT=4"),
+            self.dates(
+                datetime(2026, 1, 1, 9, tzinfo=UTC), "FREQ=YEARLY;BYYEARDAY=1,100,200;COUNT=4"
+            ),
             ["20260101", "20260410", "20260719", "20270101"],
         )
 
@@ -262,9 +271,7 @@ class DaylightSavingTests(unittest.TestCase):
         self.assertFalse(
             overlaps_range(HEBDO_PARIS, ts("20260615T000000Z"), ts("20260616T000000Z"))
         )
-        self.assertTrue(
-            overlaps_range(HEBDO_PARIS, ts("20260622T080000Z"), ts("20260622T081000Z"))
-        )
+        self.assertTrue(overlaps_range(HEBDO_PARIS, ts("20260622T080000Z"), ts("20260622T081000Z")))
 
     def test_borne_finale_en_heure_locale(self):
         data = HEBDO_PARIS.replace("BYDAY=MO", "BYDAY=MO;COUNT=30")
@@ -277,12 +284,18 @@ class InvalidDateTests(unittest.TestCase):
 
     def test_29_fevrier_annuel(self):
         start = datetime(2024, 2, 29, 9, tzinfo=UTC)
-        dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, parse_rrule("FREQ=YEARLY;COUNT=3"))]
+        dates = [
+            d.strftime("%Y%m%d")
+            for d in iter_occurrences(start, parse_rrule("FREQ=YEARLY;COUNT=3"))
+        ]
         self.assertEqual(dates, ["20240229", "20280229", "20320229"])
 
     def test_le_31_mensuel(self):
         start = datetime(2026, 1, 31, 9, tzinfo=UTC)
-        dates = [d.strftime("%Y%m%d") for d in iter_occurrences(start, parse_rrule("FREQ=MONTHLY;COUNT=4"))]
+        dates = [
+            d.strftime("%Y%m%d")
+            for d in iter_occurrences(start, parse_rrule("FREQ=MONTHLY;COUNT=4"))
+        ]
         self.assertEqual(dates, ["20260131", "20260331", "20260531", "20260731"])
 
     def test_horizon_avant_le_jour_de_dtstart(self):
@@ -297,14 +310,10 @@ class InvalidDateTests(unittest.TestCase):
 
 class TimeRangeTests(unittest.TestCase):
     def test_occurrence_lointaine_trouvee(self):
-        self.assertTrue(
-            overlaps_range(RECURRENT, ts("20260601T000000Z"), ts("20260608T000000Z"))
-        )
+        self.assertTrue(overlaps_range(RECURRENT, ts("20260601T000000Z"), ts("20260608T000000Z")))
 
     def test_exdate_respecte(self):
-        self.assertFalse(
-            overlaps_range(RECURRENT, ts("20260119T000000Z"), ts("20260120T000000Z"))
-        )
+        self.assertFalse(overlaps_range(RECURRENT, ts("20260119T000000Z"), ts("20260120T000000Z")))
 
     def test_hors_periode(self):
         self.assertFalse(overlaps_range(SIMPLE, ts("20260401T000000Z"), ts("20260402T000000Z")))

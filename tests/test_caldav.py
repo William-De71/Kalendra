@@ -32,10 +32,7 @@ def parse(result) -> ET.Element:
 
 
 def hrefs(root: ET.Element) -> list[str]:
-    return [
-        node.findtext(dav("href"), "")
-        for node in root.findall(dav("response"))
-    ]
+    return [node.findtext(dav("href"), "") for node in root.findall(dav("response"))]
 
 
 def prop_text(root: ET.Element, href: str, qname: str) -> str | None:
@@ -154,9 +151,7 @@ class ObjectLifecycleTests(ServerTestCase):
 
     def test_if_none_match_empeche_lecrasement(self):
         self.client.put(f"{PERSO}evt-1.ics", make_event())
-        result = self.client.put(
-            f"{PERSO}evt-1.ics", make_event(), headers={"If-None-Match": "*"}
-        )
+        result = self.client.put(f"{PERSO}evt-1.ics", make_event(), headers={"If-None-Match": "*"})
         self.assertStatus(result, 412)
 
     def test_if_match_detecte_un_conflit(self):
@@ -259,10 +254,18 @@ class CollectionTests(ServerTestCase):
 class ReportTests(ServerTestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.client.put(f"{PERSO}mars.ics", make_event(uid="mars", start="20260310T090000Z", end="20260310T100000Z"))
+        self.client.put(
+            f"{PERSO}mars.ics",
+            make_event(uid="mars", start="20260310T090000Z", end="20260310T100000Z"),
+        )
         self.client.put(
             f"{PERSO}juin.ics",
-            make_event(uid="juin", start="20260610T090000Z", end="20260610T100000Z", summary="Point CANopen"),
+            make_event(
+                uid="juin",
+                start="20260610T090000Z",
+                end="20260610T100000Z",
+                summary="Point CANopen",
+            ),
         )
         self.client.put(
             f"{PERSO}hebdo.ics",
@@ -472,7 +475,9 @@ class SyncTests(ServerTestCase):
         found, token2, _ = self._sync(token)
         self.assertEqual(found, [])
 
-        self.client.put(f"{PERSO}b.ics", make_event(uid="b", start="20260311T090000Z", end="20260311T100000Z"))
+        self.client.put(
+            f"{PERSO}b.ics", make_event(uid="b", start="20260311T090000Z", end="20260311T100000Z")
+        )
         found, token3, _ = self._sync(token2)
         self.assertEqual(found, [f"{PERSO}b.ics"])
         self.assertNotEqual(token2, token3)

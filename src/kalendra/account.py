@@ -73,8 +73,11 @@ def _page(title: str, body: str, config, user_row) -> Response:
         '<meta name=viewport content="width=device-width, initial-scale=1">'
         f"<title>{escape(title)}</title><style>{BASE_STYLE}{STYLE}</style></head><body>"
         + rail(
-            config.base_path, "compte", bool(user_row["is_admin"]),
-            user_row["username"], __version__,
+            config.base_path,
+            "compte",
+            bool(user_row["is_admin"]),
+            user_row["username"],
+            __version__,
         )
         + f"<div class=zone>{body}</div></body></html>"
     )
@@ -157,7 +160,12 @@ def _clients(racine: str, username: str) -> str:
 
 
 def rendre_compte(
-    db, config, request: Request, user_row, token: str, secret: tuple[str, str] | None = None,
+    db,
+    config,
+    request: Request,
+    user_row,
+    token: str,
+    secret: tuple[str, str] | None = None,
     message: str = "",
 ) -> Response:
     base = config.base_path
@@ -214,9 +222,7 @@ def rendre_compte(
         + (f"<div class=flash>{escape(message)}</div>" if message else "")
         + "<section class=bloc><h2>Configurer vos appareils</h2>"
         "<p class=muted>Les adresses à saisir dans votre client d'agenda ou de "
-        "contacts.</p>"
-        + _clients(racine, user_row["username"])
-        + "</section>"
+        "contacts.</p>" + _clients(racine, user_row["username"]) + "</section>"
         "<section class=bloc><h2>Profil pour iPhone, iPad et Mac</h2>"
         "<p class=muted>Installe en une fois le compte d'agendas et le compte de "
         "contacts. Le mot de passe est demandé à l'installation : utilisez un mot "
@@ -309,8 +315,7 @@ def handle_account(db, config, request: Request, token: str) -> Response:
         return error(405, "Méthode non autorisée.").header("Allow", "GET, HEAD, POST")
 
     champs = {
-        cle: valeurs[0]
-        for cle, valeurs in parse_qs(request.text, keep_blank_values=True).items()
+        cle: valeurs[0] for cle, valeurs in parse_qs(request.text, keep_blank_values=True).items()
     }
     if not csrf_valid(db.secret_key(), user_row["username"], champs.get("csrf", "")):
         return error(403, "Jeton CSRF invalide.")

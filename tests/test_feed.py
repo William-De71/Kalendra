@@ -24,7 +24,7 @@ RICHE = (
     "SUMMARY:Réunion de l'équipe — préparation du salon\r\n"
     "DESCRIPTION:Ordre du jour : écarts de planning\\, état des achats\\, revue d\r\n"
     " es risques\\nPrévoir le café ☕ et les croissants pour tout le monde\\, merci\r\n"
-    "ATTENDEE;CN=\"Dupont, Jean\";ROLE=REQ-PARTICIPANT:mailto:jean@example.org\r\n"
+    'ATTENDEE;CN="Dupont, Jean";ROLE=REQ-PARTICIPANT:mailto:jean@example.org\r\n'
     "X-MOZ-GENERATION:3\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\n"
     "DESCRIPTION:Rappel\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 )
@@ -92,7 +92,9 @@ class FeedTests(ServerTestCase):
         self.client.put(f"{PERSO}a.ics", make_event(uid="a", summary="Revue VCU"))
         self.client.put(
             f"{PERSO}b.ics",
-            make_event(uid="b", start="20260311T140000Z", end="20260311T150000Z", summary="Bench CAN"),
+            make_event(
+                uid="b", start="20260311T140000Z", end="20260311T150000Z", summary="Bench CAN"
+            ),
         )
         self.token = self.db.get_calendar_by_id(self.perso_id)["feed_token"]
 

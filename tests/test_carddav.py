@@ -277,9 +277,7 @@ class VueContactsTests(ServerTestCase):
         from helpers import Client
 
         client = Client(self.app, "contacts", "pw")
-        result = client.request(
-            "GET", "/view/contacts/perso/", headers={"Accept": "text/html"}
-        )
+        result = client.request("GET", "/view/contacts/perso/", headers={"Accept": "text/html"})
         self.assertStatus(result, 200)
 
 
