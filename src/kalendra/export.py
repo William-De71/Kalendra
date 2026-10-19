@@ -8,6 +8,11 @@ or anywhere else loses nothing the client once uploaded.
 
 from __future__ import annotations
 
+import io
+import re
+import zipfile
+from datetime import UTC, datetime
+
 from . import __version__
 from .ics import build_feed
 
@@ -33,3 +38,43 @@ def export_addressbook(db, addressbook_row) -> str:
         texte = row["data"].replace("\r\n", "\n").replace("\r", "\n").strip("\n")
         cartes.append(texte.replace("\n", "\r\n") + "\r\n")
     return "".join(cartes)
+
+
+def _nom_fichier(nom: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", nom) or "sans-nom"
+
+
+def export_account(db, user_row) -> bytes:
+    """Every calendar and address book of an account, in one .zip.
+
+    Deflate from the standard library: a family's worth of events compresses
+    tenfold, and the archive opens anywhere without Kalendra. Collection
+    names already obey `SAFE_HREF`, but they are filtered again here: they
+    become paths inside the archive.
+    """
+    tampon = io.BytesIO()
+    horodatage = datetime.now(UTC).timetuple()[:6]
+    with zipfile.ZipFile(tampon, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+
+        def ajouter(chemin: str, contenu: str) -> None:
+            info = zipfile.ZipInfo(chemin, date_time=horodatage)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, contenu.encode("utf-8"))
+
+        agendas = db.list_calendars(user_row["id"])
+        carnets = db.list_addressbooks(user_row["id"])
+        for row in agendas:
+            ajouter(f"agendas/{_nom_fichier(row['name'])}.ics", export_calendar(db, row))
+        for row in carnets:
+            ajouter(f"contacts/{_nom_fichier(row['name'])}.vcf", export_addressbook(db, row))
+        ajouter(
+            "LISEZMOI.txt",
+            f"Export du compte « {user_row['username']} », Kalendra {__version__}, "
+            f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC.\n\n"
+            f"agendas/  : {len(agendas)} agenda(s), un fichier .ics chacun.\n"
+            f"contacts/ : {len(carnets)} carnet(s), un fichier .vcf chacun.\n\n"
+            "Les objets sont recopiés tels qu'ils ont été déposés. Chaque fichier "
+            "s'importe dans Kalendra (page de l'agenda ou du carnet) comme dans "
+            "n'importe quel logiciel d'agenda ou de contacts.\n",
+        )
+    return tampon.getvalue()

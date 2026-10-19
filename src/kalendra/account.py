@@ -19,6 +19,7 @@ from html import escape
 from urllib.parse import parse_qs, quote, urlsplit
 
 from . import __version__
+from .export import export_account
 from .http import Request, Response, error, text_response
 from .security import csrf_valid, verify_password
 from .webui import BASE_STYLE, public_base_url, rail, titre
@@ -257,6 +258,12 @@ def rendre_compte(
         "autocomplete=new-password placeholder='Confirmation'>"
         "<button>Changer</button></form></section>"
         "<section class=bloc><h2>Espace utilisé</h2>" + espace + "</section>"
+        "<section class=bloc><h2>Exporter mes données</h2>"
+        "<p class=muted>Tous vos agendas (.ics) et carnets d'adresses (.vcf) dans "
+        "une seule archive, recopiés tels quels : de quoi changer de serveur ou "
+        "garder une copie.</p>"
+        f"<a class=bouton href='{ici}?export=zip' download>Télécharger l'archive (.zip)</a>"
+        "</section>"
         "</main>"
     )
     return _page("Kalendra — mon compte", corps, config, user_row)
@@ -318,11 +325,28 @@ def profil_apple(config, request: Request, user_row) -> Response:
     )
 
 
+def _export_compte(db, user_row) -> Response:
+    corps = export_account(db, user_row)
+    nom = re.sub(r"[^A-Za-z0-9._-]", "_", user_row["username"])
+    return Response(
+        200,
+        corps,
+        [
+            ("Content-Type", "application/zip"),
+            ("Content-Length", str(len(corps))),
+            ("Content-Disposition", f'attachment; filename="kalendra-{nom}.zip"'),
+            ("Cache-Control", "private, no-store"),
+        ],
+    )
+
+
 def handle_account(db, config, request: Request, token: str) -> Response:
     user_row = request.user
     if request.method in {"GET", "HEAD"}:
         if request.query_param("profil") == "apple":
             return profil_apple(config, request, user_row)
+        if request.query_param("export") == "zip":
+            return _export_compte(db, user_row)
         return rendre_compte(
             db, config, request, user_row, token, message=request.query_param("msg")
         )

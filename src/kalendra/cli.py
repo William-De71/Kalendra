@@ -123,6 +123,20 @@ def cmd_user_passwd(args) -> int:
     return 0
 
 
+def cmd_user_export(args) -> int:
+    from .export import export_account
+
+    db = _database(args)
+    user = _user_or_exit(db, args.username)
+    destination = args.output or f"kalendra-{args.username}.zip"
+    if os.path.exists(destination):
+        raise SystemExit(f"Le fichier existe déjà : {destination}")
+    with open(destination, "wb") as handle:
+        handle.write(export_account(db, user))
+    print(f"Export écrit : {destination}")
+    return 0
+
+
 def cmd_user_rm(args) -> int:
     db = _database(args)
     user = db.get_user(args.username)
@@ -389,6 +403,11 @@ def build_parser() -> argparse.ArgumentParser:
     passwd.add_argument("username")
     passwd.add_argument("--password")
     passwd.set_defaults(func=cmd_user_passwd)
+
+    exp = user.add_parser("export", help="tous les agendas et carnets dans un .zip")
+    exp.add_argument("username")
+    exp.add_argument("-o", "--output", help="fichier .zip (défaut : kalendra-<compte>.zip)")
+    exp.set_defaults(func=cmd_user_export)
 
     remove = user.add_parser("rm")
     remove.add_argument("username")
