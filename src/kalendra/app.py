@@ -24,15 +24,13 @@ from .config import Config
 from .dav import DavHandler
 from .db import Database
 from .feed import handle_feed
-from .http import Request, Response, error, for_log, text_response
+from .http import REALM, Request, Response, error, for_log, text_response
 from .maintenance import EtatEntretien, Planificateur
 from .metrics import Metriques
 from .security import csrf_token, verify_password
 
 logger = logging.getLogger("kalendra")
 access_logger = logging.getLogger("kalendra.access")
-
-REALM = 'Basic realm="Kalendra", charset="UTF-8"'
 
 #: Dummy hash: keeps verification cost identical for a non-existent account,
 #: so response timing never reveals which usernames exist.

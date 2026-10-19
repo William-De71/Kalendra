@@ -152,6 +152,11 @@ synchronisation, jamais l'interface web. On y change aussi le mot de passe de
 son compte (l'actuel est redemandé), et on y télécharge **toutes ses données**
 en une archive `.zip` : agendas en `.ics`, carnets en `.vcf`.
 
+Pour passer d'un compte à l'autre dans le navigateur, suivez **« Changer
+d'utilisateur »** sous votre nom, en bas de la barre latérale : la fenêtre de
+connexion réapparaît. (L'authentification HTTP Basic n'a pas de déconnexion à
+proprement parler ; fermer le navigateur oublie aussi les identifiants.)
+
 ### GNOME Evolution (Fedora)
 
 `Nouveau → Calendrier → Type : CalDAV`, puis :

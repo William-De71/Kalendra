@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote
 
+#: Basic challenge, shared by the core and the "switch user" page.
+REALM = 'Basic realm="Kalendra", charset="UTF-8"'
+
 STATUS_TEXT = {
     200: "OK",
     201: "Created",

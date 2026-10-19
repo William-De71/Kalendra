@@ -182,5 +182,62 @@ class AppleProfileTests(ServerTestCase):
         self.assertEqual(self.profil()["PayloadUUID"], self.profil()["PayloadUUID"])
 
 
+class SwitchUserTests(ServerTestCase):
+    def suivre(self, client, chemin: str = "/view/changer"):
+        result = client.request("GET", chemin)
+        self.assertStatus(result, 303)
+        return result.header("location")
+
+    def test_lien_dans_la_barre_laterale(self):
+        self.assertIn("/view/changer", self.alice.request("GET", "/view/").text)
+
+    def test_vers_un_autre_compte(self):
+        cible = self.suivre(self.client)
+        self.assertRegex(cible, r"^/view/changer\?j=[\w-]{16,}$")
+        # Same credentials replayed by the browser: refused once, so it asks.
+        defi = self.client.request("GET", cible)
+        self.assertStatus(defi, 401)
+        self.assertTrue(defi.header("www-authenticate").startswith("Basic "))
+        self.assertIn("text/html", defi.header("content-type"))
+        # The account typed in the prompt is let through, back to /view/.
+        self.assertEqual(self.suivre(self.alice, cible), "/view/")
+
+    def test_meme_compte_ressaisi(self):
+        cible = self.suivre(self.client)
+        self.assertStatus(self.client.request("GET", cible), 401)
+        self.assertEqual(self.suivre(self.client, cible), "/view/")
+
+    def test_jeton_a_usage_unique(self):
+        cible = self.suivre(self.client)
+        self.client.request("GET", cible)
+        self.suivre(self.alice, cible)
+        # Consumed: a reload no longer challenges, so no loop.
+        self.assertEqual(self.suivre(self.alice, cible), "/view/")
+
+    def test_jeton_inconnu(self):
+        self.assertEqual(self.suivre(self.client, "/view/changer?j=invente"), "/view/")
+
+    def test_pas_un_echec_dauthentification(self):
+        cible = self.suivre(self.client)
+        self.client.request("GET", cible)
+        self.assertEqual(self.app.metrics.echecs_auth, 0)
+
+    def test_post_refuse(self):
+        self.assertStatus(self.client.request("POST", "/view/changer"), 405)
+
+    def test_anonyme(self):
+        self.assertStatus(self.anon.request("GET", "/view/changer"), 401)
+
+    def test_nombre_de_jetons_borne(self):
+        from kalendra.account import MAX_CHANGEMENTS, _Changements
+
+        changements = _Changements()
+        premier = changements.creer()
+        for _ in range(MAX_CHANGEMENTS):
+            changements.creer()
+        self.assertEqual(len(changements._jetons), MAX_CHANGEMENTS)
+        self.assertEqual(changements.visiter(premier), "")
+
+
 if __name__ == "__main__":
     unittest.main()

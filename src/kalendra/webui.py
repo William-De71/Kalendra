@@ -59,6 +59,9 @@ a { color:var(--accent); }
 .rail .compte .nom { color:var(--fg); font-size:13.5px; font-weight:600;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rail .compte .role { color:var(--muted); font-size:11.5px; }
+.rail .compte a.changer { color:var(--muted); font-size:11.5px; text-decoration:underline;
+  text-underline-offset:2px; }
+.rail .compte a.changer:hover { color:var(--fg); }
 .rail .compte .version { margin-left:auto; color:var(--muted); font-size:11px; }
 
 .zone { margin-left:var(--nav); min-height:100vh; }
@@ -132,7 +135,8 @@ def rail(base: str, actif: str, admin: bool, username: str = "", version: str = 
             "<div class=compte>"
             f"<span class=jeton aria-hidden='true'>{escape(username[:1])}</span>"
             f"<span class=qui><span class=nom>{escape(username)}</span>"
-            f"<div class=role>{role}</div></span>"
+            f"<div class=role>{role}</div>"
+            f"<a class=changer href='{base}/view/changer'>Changer d'utilisateur</a></span>"
             + (f"<span class=version>v{escape(version)}</span>" if version else "")
             + "</div>"
         )

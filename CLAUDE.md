@@ -212,6 +212,7 @@ choix de conception, pas un oubli.
 /view/compte/                         « Mon compte » ; POST : mots de passe (CSRF)
 /view/compte/?profil=apple            profil .mobileconfig
 /view/compte/?export=zip              archive de tout le compte
+/view/changer                         redemande les identifiants (jeton unique)
 /admin…                               interface d'administration (is_admin)
 /health                               sonde, sans authentification
 /metrics                              Prometheus (KALENDRA_METRICS), jeton Bearer facultatif
@@ -221,12 +222,18 @@ choix de conception, pas un oubli.
 carnets (un administrateur voit tout) ; `/admin` exige `is_admin`. Le préfixe
 `/view/contacts/` n'est emprunté que si le segment suivant désigne un compte
 existant — sans quoi un utilisateur nommé « contacts » perdrait l'accès à ses
-propres agendas. `/view/compte/` et `/view/recherche/` tiennent en un seul
+propres agendas. `/view/compte/`, `/view/changer` et `/view/recherche/` tiennent en un seul
 segment, ce qu'aucun agenda n'a jamais désigné (il en faut deux) : ils ne
 masquent donc rien. Les modes et l'export passent par la chaîne de requête
 plutôt que par un segment, pour la même raison — `export.ics` pourrait être le
 nom d'un objet. Les deux interfaces sont coupées ensemble par
 `KALENDRA_ADMIN_UI=false`.
+
+L'authentification Basic n'a **pas de déconnexion** : le navigateur rejoue ses
+identifiants jusqu'à recevoir un 401. `/view/changer` en renvoie un, une seule
+fois par jeton (`account._Changements`, en mémoire, 5 min) : répondre 401 à
+chaque visite d'une URL fixe bouclerait, en refusant même les identifiants
+tout juste saisis. Ce 401 volontaire ne compte pas comme un échec de connexion.
 
 ### Fuseaux dans la vue mensuelle
 

@@ -5,6 +5,13 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Ajouté
+
+- Lien « Changer d'utilisateur » sous le nom du compte, dans la barre latérale :
+  l'authentification HTTP Basic n'ayant pas de déconnexion, il fait
+  redemander ses identifiants au navigateur une fois (`/view/changer`, jeton à
+  usage unique), sans boucle et sans compter comme un échec de connexion.
+
 ## [1.3.0] — 2026-10-19
 
 ### Ajouté
