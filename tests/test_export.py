@@ -31,9 +31,7 @@ def multipart(champs: dict[str, str], fichier: str) -> tuple[bytes, dict[str, st
         f'--{limite}\r\nContent-Disposition: form-data; name="fichier"; filename="x.vcf"\r\n'
         f"Content-Type: text/vcard\r\n\r\n{fichier}\r\n--{limite}--\r\n"
     )
-    return "".join(morceaux).encode(), {
-        "Content-Type": f"multipart/form-data; boundary={limite}"
-    }
+    return "".join(morceaux).encode(), {"Content-Type": f"multipart/form-data; boundary={limite}"}
 
 
 class ExportTests(ServerTestCase):
@@ -174,7 +172,9 @@ class CliExportTests(ServerTestCase):
         fichier = os.path.join(self.tmp, "amis.vcf")
         with open(fichier, "w", encoding="utf-8", newline="") as handle:
             handle.write(VCF)
-        self.assertIn("2 contact(s)", self.run_cli("addressbook", "import", "will", "amis", fichier))
+        self.assertIn(
+            "2 contact(s)", self.run_cli("addressbook", "import", "will", "amis", fichier)
+        )
         export = self.run_cli("addressbook", "export", "will", "amis")
         # Stored as uploaded, lower-case header included.
         self.assertEqual(export.upper().count("BEGIN:VCARD"), 2)

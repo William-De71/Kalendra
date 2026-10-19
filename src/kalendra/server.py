@@ -45,9 +45,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             response = self._build_response()
         except Exception:
-            logger.exception(
-                "erreur interne sur %s %s", for_log(self.command), for_log(self.path)
-            )
+            logger.exception("erreur interne sur %s %s", for_log(self.command), for_log(self.path))
             response = error(500, "Erreur interne.")
         self._write(response)
 

@@ -372,9 +372,7 @@ def local_start(component: Component) -> datetime | None:
     return raw
 
 
-def recurrences(
-    component: Component, rule: dict, *, limit: int, horizon: datetime | None = None
-):
+def recurrences(component: Component, rule: dict, *, limit: int, horizon: datetime | None = None):
     """UTC occurrences of a rule, expanded in DTSTART's own zone."""
     start = local_start(component)
     if start is None:
@@ -568,9 +566,7 @@ def _split_overrides(calendar: Component) -> tuple[list[Component], dict[datetim
             continue
         recurrence_id = component.get("RECURRENCE-ID")
         if recurrence_id is not None:
-            moment = to_utc(
-                parse_datetime_value(recurrence_id.value, recurrence_id.param("TZID"))
-            )
+            moment = to_utc(parse_datetime_value(recurrence_id.value, recurrence_id.param("TZID")))
             if moment is not None:
                 overrides[moment] = component
                 continue
@@ -723,10 +719,7 @@ def _stamp(moment: datetime, all_day: bool, name: str) -> str:
 
 
 def _instance_lines(raw: list[str], instance: Instance, all_day: bool) -> list[str]:
-    own = {
-        line.split(":", 1)[0].split(";", 1)[0].upper()
-        for line in raw[1:-1]
-    }
+    own = {line.split(":", 1)[0].split(";", 1)[0].upper() for line in raw[1:-1]}
     lines = [raw[0], _stamp(instance.start, all_day, "DTSTART")]
     finish = shift(instance.start, instance.duration)
     if "DTEND" in own:
@@ -841,12 +834,7 @@ def fold(line: str) -> str:
 
 
 def escape_text(value: str) -> str:
-    return (
-        value.replace("\\", "\\\\")
-        .replace(";", r"\;")
-        .replace(",", r"\,")
-        .replace("\n", r"\n")
-    )
+    return value.replace("\\", "\\\\").replace(";", r"\;").replace(",", r"\,").replace("\n", r"\n")
 
 
 def iter_top_level_blocks(text: str) -> list[tuple[str, list[str]]]:
@@ -934,6 +922,7 @@ def build_feed(
                 body.extend(fold(line) for line in block_lines)
 
     return "\r\n".join([*lines, *timezones, *body, "END:VCALENDAR", ""])
+
 
 # ------------------------------------------------------ splitting for import
 

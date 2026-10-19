@@ -99,9 +99,7 @@ def cmd_user_add(args) -> int:
     if args.with_calendar:
         db.create_calendar(user_id, args.with_calendar, display_name=args.with_calendar)
     if args.with_addressbook:
-        db.create_addressbook(
-            user_id, args.with_addressbook, display_name=args.with_addressbook
-        )
+        db.create_addressbook(user_id, args.with_addressbook, display_name=args.with_addressbook)
     print(f"Utilisateur « {args.username} » créé (id={user_id}).")
     return 0
 
@@ -257,7 +255,10 @@ def cmd_calendar_import(args) -> int:
     config = Config.from_env()
     with open(args.file, encoding="utf-8", errors="replace") as handle:
         rapport = importer(
-            db, calendar, handle.read(), max_taille=config.max_resource_size,
+            db,
+            calendar,
+            handle.read(),
+            max_taille=config.max_resource_size,
             quota=config.quota_bytes,
         )
     return _import_report(rapport)
@@ -282,7 +283,10 @@ def cmd_addressbook_import(args) -> int:
     config = Config.from_env()
     with open(args.file, encoding="utf-8", errors="replace") as handle:
         rapport = importer_cartes(
-            db, carnet, handle.read(), max_taille=config.max_resource_size,
+            db,
+            carnet,
+            handle.read(),
+            max_taille=config.max_resource_size,
             quota=config.quota_bytes,
         )
     return _import_report(rapport)
@@ -359,9 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init-db", help="crée le schéma SQLite").set_defaults(func=cmd_init)
 
-    backup = sub.add_parser(
-        "backup", help="copie cohérente de la base, serveur en marche"
-    )
+    backup = sub.add_parser("backup", help="copie cohérente de la base, serveur en marche")
     backup.add_argument("destination", help="fichier à créer, ou dossier où le créer")
     backup.add_argument(
         "--compact", action="store_true", help="VACUUM INTO : copie plus petite, plus lente"

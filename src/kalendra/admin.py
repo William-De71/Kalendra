@@ -216,9 +216,7 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
     message = request.query_param("msg")
     users = db.list_users()
 
-    parts = [
-        titre("<h1>Administration</h1>") + "<main>"
-    ]
+    parts = [titre("<h1>Administration</h1>") + "<main>"]
     if message:
         parts.append(f"<div class=flash>{escape(message)}</div>")
 
@@ -302,11 +300,7 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
         f"<input name=q value='{escape(requete)}' "
         "placeholder='filtrer par identifiant, nom ou email'>"
         "<button class=ghost>Filtrer</button>"
-        + (
-            f"<a class=bouton href='{config.base_path}/admin'>Tout afficher</a>"
-            if requete
-            else ""
-        )
+        + (f"<a class=bouton href='{config.base_path}/admin'>Tout afficher</a>" if requete else "")
         + "</form>"
         "<table><tr><th>Compte</th><th>Agendas</th><th>Objets</th><th></th></tr>"
         + ("".join(lignes) or vide)
@@ -321,7 +315,6 @@ def _dashboard(db, config, request: Request, token: str) -> Response:
         "<label class=muted><input type=checkbox name=is_admin> admin</label>"
         "<button>Créer</button></form></details></section>"
     )
-
 
     parts.append(
         "</main><footer>Kalendra — CalDAV en lecture/écriture pour Evolution, Thunderbird, "
@@ -381,12 +374,20 @@ def _user_page(db, config, request: Request, token: str, user_id: int) -> Respon
             f"<td>{feed}</td>"
             f"<td style='white-space:nowrap'>"
             + _button(
-                bp, token, "calendars/token", "Régénérer",
-                calendar_id=calendar["id"], user_id=user["id"],
+                bp,
+                token,
+                "calendars/token",
+                "Régénérer",
+                calendar_id=calendar["id"],
+                user_id=user["id"],
             )
             + _button(
-                bp, token, "calendars/feed", "Activer/couper",
-                calendar_id=calendar["id"], user_id=user["id"],
+                bp,
+                token,
+                "calendars/feed",
+                "Activer/couper",
+                calendar_id=calendar["id"],
+                user_id=user["id"],
             )
             + _button(
                 bp,
@@ -398,8 +399,7 @@ def _user_page(db, config, request: Request, token: str, user_id: int) -> Respon
                 cls="danger",
                 confirm=True,
             )
-            +
-            "</td></tr>"
+            + "</td></tr>"
         )
 
     parts.append(
@@ -436,8 +436,7 @@ def _user_page(db, config, request: Request, token: str, user_id: int) -> Respon
                 cls="danger",
                 confirm=True,
             )
-            +
-            "</td></tr>"
+            + "</td></tr>"
         )
     parts.append(
         f"<section><h2>{escape(user['username'])} · carnets d'adresses</h2>"

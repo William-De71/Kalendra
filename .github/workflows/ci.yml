@@ -35,9 +35,10 @@ jobs:
       - name: ruff check
         run: ruff check src tests scripts
 
+      # Blocking since the tree was formatted in one commit: a check that
+      # can fail without consequence ends up ignored.
       - name: ruff format --check
         run: ruff format --check src tests scripts
-        continue-on-error: true
 
   test:
     name: Tests (Python ${{ matrix.python-version }})

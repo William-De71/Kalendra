@@ -101,8 +101,4 @@ def card_matches(card: VCard, texte: str) -> bool:
     if not texte:
         return True
     besoin = texte.lower()
-    return any(
-        besoin in valeur.lower()
-        for valeur in (card.fn, card.email, card.uid)
-        if valeur
-    )
+    return any(besoin in valeur.lower() for valeur in (card.fn, card.email, card.uid) if valeur)

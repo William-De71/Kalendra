@@ -78,10 +78,7 @@ def calendar_path(username: str, calendar_name: str, kind: str = "calendar") -> 
 
 
 def object_path(username: str, calendar_name: str, href: str, kind: str = "calendar") -> str:
-    return (
-        f"/{RACINE[kind]}/{href_quote(username)}/"
-        f"{href_quote(calendar_name)}/{href_quote(href)}"
-    )
+    return f"/{RACINE[kind]}/{href_quote(username)}/{href_quote(calendar_name)}/{href_quote(href)}"
 
 
 def resolve(db, segments: list[str], path: str) -> Resource:

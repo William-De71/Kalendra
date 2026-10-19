@@ -64,7 +64,9 @@ END:VCARD
 """
 
 
-def make_card(uid: str = "card-1", fn: str = "Jean Dupont", email: str = "jean@example.org") -> bytes:
+def make_card(
+    uid: str = "card-1", fn: str = "Jean Dupont", email: str = "jean@example.org"
+) -> bytes:
     return CARD_TEMPLATE.format(uid=uid, fn=fn, email=email).replace("\n", "\r\n").encode("utf-8")
 
 

@@ -70,23 +70,100 @@ GRAINES_VCF = [
 
 #: Fragments that tend to break hand-written parsers.
 EPICES = [
-    ":", ";", "=", ",", '"', "\\", "\r\n", "\n", "\r", " ", "\t", "\x00", "é", "☕", "\ufeff",
-    "BEGIN:VEVENT", "END:VEVENT", "BEGIN:VALARM", "END:VCALENDAR", "BEGIN:VCARD", "END:VCARD",
-    "TZID=", "TZID=Nowhere/Land", "TZID=\"/a/b/c\"", "VALUE=DATE", "Z", "T", "P", "-P1W",
-    "RRULE:", "FREQ=", "COUNT=", "UNTIL=", "BYDAY=", "BYSETPOS=", "99999999T999999Z",
-    "00000000", "20261301", "20260230T250000", "-1", "0", "53", "-53", "367",
+    ":",
+    ";",
+    "=",
+    ",",
+    '"',
+    "\\",
+    "\r\n",
+    "\n",
+    "\r",
+    " ",
+    "\t",
+    "\x00",
+    "é",
+    "☕",
+    "\ufeff",
+    "BEGIN:VEVENT",
+    "END:VEVENT",
+    "BEGIN:VALARM",
+    "END:VCALENDAR",
+    "BEGIN:VCARD",
+    "END:VCARD",
+    "TZID=",
+    "TZID=Nowhere/Land",
+    'TZID="/a/b/c"',
+    "VALUE=DATE",
+    "Z",
+    "T",
+    "P",
+    "-P1W",
+    "RRULE:",
+    "FREQ=",
+    "COUNT=",
+    "UNTIL=",
+    "BYDAY=",
+    "BYSETPOS=",
+    "99999999T999999Z",
+    "00000000",
+    "20261301",
+    "20260230T250000",
+    "-1",
+    "0",
+    "53",
+    "-53",
+    "367",
 ]
 
 #: Rule parts mixed into RRULE values, valid or not.
 MORCEAUX_RRULE = [
-    "FREQ=SECONDLY", "FREQ=MINUTELY", "FREQ=HOURLY", "FREQ=DAILY", "FREQ=WEEKLY",
-    "FREQ=MONTHLY", "FREQ=YEARLY", "FREQ=", "FREQ=NEVER", "INTERVAL=0", "INTERVAL=-3",
-    "INTERVAL=7", "COUNT=0", "COUNT=-1", "COUNT=3", "UNTIL=20261231T235959Z", "UNTIL=20260101",
-    "UNTIL=garbage", "BYDAY=MO,WE", "BYDAY=1MO", "BYDAY=-1SU", "BYDAY=99XX", "BYDAY=+2TU",
-    "BYDAY=", "BYMONTH=0", "BYMONTH=13", "BYMONTH=2", "BYMONTHDAY=0", "BYMONTHDAY=-31",
-    "BYMONTHDAY=31", "BYMONTHDAY=32", "BYYEARDAY=0", "BYYEARDAY=-366", "BYYEARDAY=400",
-    "BYWEEKNO=0", "BYWEEKNO=54", "BYWEEKNO=-1", "BYHOUR=25", "BYHOUR=-1", "BYMINUTE=61",
-    "BYSETPOS=0", "BYSETPOS=-1", "BYSETPOS=400", "WKST=SU", "WKST=XX", "BYSECOND=5",
+    "FREQ=SECONDLY",
+    "FREQ=MINUTELY",
+    "FREQ=HOURLY",
+    "FREQ=DAILY",
+    "FREQ=WEEKLY",
+    "FREQ=MONTHLY",
+    "FREQ=YEARLY",
+    "FREQ=",
+    "FREQ=NEVER",
+    "INTERVAL=0",
+    "INTERVAL=-3",
+    "INTERVAL=7",
+    "COUNT=0",
+    "COUNT=-1",
+    "COUNT=3",
+    "UNTIL=20261231T235959Z",
+    "UNTIL=20260101",
+    "UNTIL=garbage",
+    "BYDAY=MO,WE",
+    "BYDAY=1MO",
+    "BYDAY=-1SU",
+    "BYDAY=99XX",
+    "BYDAY=+2TU",
+    "BYDAY=",
+    "BYMONTH=0",
+    "BYMONTH=13",
+    "BYMONTH=2",
+    "BYMONTHDAY=0",
+    "BYMONTHDAY=-31",
+    "BYMONTHDAY=31",
+    "BYMONTHDAY=32",
+    "BYYEARDAY=0",
+    "BYYEARDAY=-366",
+    "BYYEARDAY=400",
+    "BYWEEKNO=0",
+    "BYWEEKNO=54",
+    "BYWEEKNO=-1",
+    "BYHOUR=25",
+    "BYHOUR=-1",
+    "BYMINUTE=61",
+    "BYSETPOS=0",
+    "BYSETPOS=-1",
+    "BYSETPOS=400",
+    "WKST=SU",
+    "WKST=XX",
+    "BYSECOND=5",
 ]
 
 
@@ -146,8 +223,12 @@ class ParserFuzzTests(unittest.TestCase):
                 text_matches(texte, "VEVENT", "SUMMARY", "a", negate=False)
                 split_calendar(texte)
                 build_feed(
-                    name="x", description="", color="", objects=[texte],
-                    refresh_minutes=60, prodid="x",
+                    name="x",
+                    description="",
+                    color="",
+                    objects=[texte],
+                    refresh_minutes=60,
+                    prodid="x",
                 )
 
     def test_vcard(self):
@@ -196,7 +277,9 @@ class ServerFuzzTests(ServerTestCase):
             corps = muter(rng.choice(GRAINES_VCF), rng).encode("utf-8", "surrogatepass")
             with self.subTest(tour=tour, corps=corps):
                 result = self.client.request(
-                    "PUT", f"/addressbooks/will/amis/f{tour}.vcf", corps,
+                    "PUT",
+                    f"/addressbooks/will/amis/f{tour}.vcf",
+                    corps,
                     {"Content-Type": "text/vcard"},
                 )
                 self.assertLess(result.status, 500, result.text)
@@ -229,7 +312,9 @@ class ServerFuzzTests(ServerTestCase):
             methode = rng.choice(["REPORT", "PROPFIND", "PROPPATCH", "MKCALENDAR"])
             with self.subTest(tour=tour, methode=methode, corps=corps):
                 result = self.client.request(
-                    methode, "/calendars/will/perso/", corps,
+                    methode,
+                    "/calendars/will/perso/",
+                    corps,
                     {"Content-Type": "application/xml", "Depth": "1"},
                 )
                 # 501 is the designed answer to an unknown REPORT; 500 is a crash.

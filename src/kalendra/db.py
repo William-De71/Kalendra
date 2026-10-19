@@ -158,9 +158,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         # default value suits them.
         colonnes = {r["name"] for r in conn.execute("PRAGMA table_info(calendars)")}
         if "kind" not in colonnes:
-            conn.execute(
-                "ALTER TABLE calendars ADD COLUMN kind TEXT NOT NULL DEFAULT 'calendar'"
-            )
+            conn.execute("ALTER TABLE calendars ADD COLUMN kind TEXT NOT NULL DEFAULT 'calendar'")
     if version < 3:
         # v3: uniqueness must include `kind`, otherwise an address book cannot
         # carry the same name as a calendar of the same account. The original
@@ -340,9 +338,7 @@ class Database:
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     def get_user(self, username: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        ).fetchone()
+        return self.conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
 
     def get_user_by_id(self, user_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -356,9 +352,7 @@ class Database:
     def count_admins(self) -> int:
         """Used to refuse deleting or demoting the last administrator."""
         return int(
-            self.conn.execute(
-                "SELECT COUNT(*) AS n FROM users WHERE is_admin = 1"
-            ).fetchone()["n"]
+            self.conn.execute("SELECT COUNT(*) AS n FROM users WHERE is_admin = 1").fetchone()["n"]
         )
 
     # ------------------------------------------------ mots de passe d'application
@@ -466,9 +460,7 @@ class Database:
         ).fetchone()
 
     def get_calendar_by_id(self, calendar_id: int) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT * FROM calendars WHERE id = ?", (calendar_id,)
-        ).fetchone()
+        return self.conn.execute("SELECT * FROM calendars WHERE id = ?", (calendar_id,)).fetchone()
 
     def get_calendar_by_token(self, token: str) -> sqlite3.Row | None:
         return self.conn.execute(
@@ -547,6 +539,7 @@ class Database:
         Counting calendar by calendar would mean one query per displayed row;
         here the number of queries does not depend on the number of accounts.
         """
+
         def _un(sql: str) -> int:
             return int(self.conn.execute(sql).fetchone()["n"])
 
@@ -557,8 +550,7 @@ class Database:
             "addressbooks": _un("SELECT COUNT(*) AS n FROM calendars WHERE kind = 'addressbook'"),
             "contacts": _un("SELECT COUNT(*) AS n FROM objects WHERE component = 'VCARD'"),
             "feeds": _un(
-                "SELECT COUNT(*) AS n FROM calendars"
-                " WHERE feed_enabled = 1 AND kind = 'calendar'"
+                "SELECT COUNT(*) AS n FROM calendars WHERE feed_enabled = 1 AND kind = 'calendar'"
             ),
             "objects": _un("SELECT COUNT(*) AS n FROM objects WHERE component != 'VCARD'"),
             "events": _un("SELECT COUNT(*) AS n FROM objects WHERE component = 'VEVENT'"),
@@ -682,9 +674,7 @@ class Database:
     @staticmethod
     def _bump_rev(conn: sqlite3.Connection, calendar_id: int) -> int:
         conn.execute("UPDATE calendars SET sync_rev = sync_rev + 1 WHERE id = ?", (calendar_id,))
-        row = conn.execute(
-            "SELECT sync_rev FROM calendars WHERE id = ?", (calendar_id,)
-        ).fetchone()
+        row = conn.execute("SELECT sync_rev FROM calendars WHERE id = ?", (calendar_id,)).fetchone()
         return int(row["sync_rev"]) if row else 1
 
     def changes_since(self, calendar_id: int, since_rev: int) -> list[sqlite3.Row]:

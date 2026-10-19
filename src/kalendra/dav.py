@@ -115,9 +115,7 @@ def _matches(row, comp: CompFilter) -> bool:
         ):
             return False
     # e.g. VEVENT > VALARM: not indexed, so let it through
-    return all(
-        not (sub.is_not_defined and row["component"] == sub.name) for sub in comp.comps
-    )
+    return all(not (sub.is_not_defined and row["component"] == sub.name) for sub in comp.comps)
 
 
 def filter_objects(db, calendar_id: int, root: CompFilter | None) -> list:
@@ -260,9 +258,7 @@ class DavHandler:
     def options(self, resource: Resource) -> Response:
         response = Response(204)
         response.header("DAV", DAV_COMPLIANCE)
-        response.header(
-            "Allow", ALLOW_COLLECTION if resource.is_collection else ALLOW_OBJECT
-        )
+        response.header("Allow", ALLOW_COLLECTION if resource.is_collection else ALLOW_OBJECT)
         response.header("MS-Author-Via", "DAV")
         return response
 
@@ -478,9 +474,11 @@ class DavHandler:
     def delete(self, request: Request, resource: Resource) -> Response:
         if resource.kind == Kind.OBJECT and resource.obj is not None:
             if_match = request.header("if-match").strip()
-            if if_match and if_match != "*" and resource.obj["etag"] not in {
-                tag.strip() for tag in if_match.split(",")
-            }:
+            if (
+                if_match
+                and if_match != "*"
+                and resource.obj["etag"] not in {tag.strip() for tag in if_match.split(",")}
+            ):
                 return error(412, "ETag différent.")
             self.db.delete_object(resource.calendar["id"], resource.name)
             return Response(204).header("Content-Length", "0")
@@ -544,9 +542,7 @@ class DavHandler:
                 and not is_addressbook
                 and root.find(f".//{{{NS_DAV}}}resourcetype") is not None
             ):
-                return error(
-                    403, "Seuls les agendas et les carnets d'adresses sont supportés."
-                )
+                return error(403, "Seuls les agendas et les carnets d'adresses sont supportés.")
         return self.mkcalendar(request, resource)
 
     @staticmethod
@@ -618,9 +614,7 @@ class DavHandler:
             return children(self.db, resource)
         return []
 
-    def _calendar_query(
-        self, request: Request, resource: Resource, root: ET.Element
-    ) -> Response:
+    def _calendar_query(self, request: Request, resource: Resource, root: ET.Element) -> Response:
         scope = self._calendar_scope(resource)
         if not scope:
             return error(403, "calendar-query nécessite une collection calendrier.")
@@ -717,9 +711,7 @@ class DavHandler:
             ms.append(node)
         return xml_response(207, to_bytes(ms))
 
-    def _sync_collection(
-        self, request: Request, resource: Resource, root: ET.Element
-    ) -> Response:
+    def _sync_collection(self, request: Request, resource: Resource, root: ET.Element) -> Response:
         if resource.kind != Kind.CALENDAR or resource.calendar is None:
             return error(403, "sync-collection nécessite une collection calendrier.")
         calendar = resource.calendar
@@ -806,9 +798,7 @@ class DavHandler:
         lines += ["END:VFREEBUSY", "END:VCALENDAR", ""]
         return text_response(200, "\r\n".join(lines), "text/calendar; charset=utf-8")
 
-    def _principal_search(
-        self, request: Request, resource: Resource, root: ET.Element
-    ) -> Response:
+    def _principal_search(self, request: Request, resource: Resource, root: ET.Element) -> Response:
         """Minimal search: return the current principal when it matches."""
         requested, allprop, _ = _requested_props(root)
         ms = multistatus()
