@@ -148,7 +148,9 @@ latérale). La page affiche les adresses exactes à saisir pour votre compte,
 les étapes pour chaque client ci-dessous, un **profil de configuration Apple**
 à télécharger, et permet de créer des **mots de passe d'application** — un par
 appareil, révocable seul si l'appareil est perdu, et qui n'ouvre que la
-synchronisation, jamais l'interface web.
+synchronisation, jamais l'interface web. On y change aussi le mot de passe de
+son compte (l'actuel est redemandé), et on y télécharge **toutes ses données**
+en une archive `.zip` : agendas en `.ics`, carnets en `.vcf`.
 
 ### GNOME Evolution (Fedora)
 
@@ -217,7 +219,14 @@ Deux autres vues se choisissent dans la barre de titre : **Semaine**
 (`?vue=semaine&d=2026-03-16`), qui liste tous les événements de chaque jour
 au lieu de les replier en « +N autres », et **Liste** (`?vue=liste&m=2026-03`),
 une ligne par événement avec ses horaires, pour les jours du mois qui ont
-quelque chose.
+quelque chose. L'onglet **Tâches** (`?vue=taches`) liste les tâches (VTODO) en
+cours par échéance puis priorité, signale les retards, et replie celles qui
+sont terminées.
+
+La **recherche** (`/view/recherche/?q=…`, champ en haut de `/view/`) parcourt
+titres, lieux, descriptions et catégories de vos événements et tâches, sans
+tenir compte des majuscules ni des accents : « reunion » trouve « Réunion ».
+Les résultats à venir viennent d'abord, puis les passés.
 
 `/view/contacts/<utilisateur>/<carnet>/` fait de même pour un carnet
 d'adresses : la liste des fiches triée par nom, puis le détail d'un contact
@@ -380,7 +389,49 @@ fichier plus petit, au prix d'un peu plus de temps. Restaurer, c'est arrêter le
 conteneur et remettre ce fichier à la place de `kalendra.db`.
 
 Pour un seul agenda ou un seul carnet : `kalendra calendar export` et
-`kalendra addressbook export` (voir la ligne de commande).
+`kalendra addressbook export` ; pour tout un compte, `kalendra user export`
+(voir la ligne de commande).
+
+#### Sauvegarde automatique
+
+Inutile de passer par le `cron` de l'hôte : avec **`KALENDRA_BACKUP_DIR`**, le
+serveur fait lui-même une sauvegarde chaque nuit à `KALENDRA_MAINTENANCE_HOUR`
+(3 h, heure locale du conteneur) et ne garde que les `KALENDRA_BACKUP_KEEP`
+plus récentes (7). La rotation ne supprime jamais que des fichiers nommés
+comme ses propres sauvegardes.
+
+```yaml
+    environment:
+      KALENDRA_BACKUP_DIR: "/data/sauvegardes"
+```
+
+Le dossier vit alors dans le même volume que la base : cela protège d'une
+erreur de manipulation ou d'une corruption, pas de la perte du disque.
+Recopiez-le ailleurs (un second volume, un `rsync` vers une autre machine)
+pour cela. Un échec est journalisé et compté dans les métriques, sans arrêter
+les sauvegardes suivantes ; `kalendra maintenance` lance le même passage à la
+main.
+
+#### Journal de synchronisation
+
+Chaque objet supprimé laisse une trace, qui permet à un client de savoir qu'il
+doit l'effacer lui aussi. Ces traces sont oubliées au bout de
+`KALENDRA_SYNC_RETENTION_DAYS` jours (90 ; `0` les garde toujours), au même
+passage nocturne. Un client resté hors ligne plus longtemps refait simplement
+une synchronisation complète.
+
+### Métriques Prometheus
+
+`KALENDRA_METRICS=true` sert `/metrics` au format texte de Prometheus :
+requêtes par méthode et statut, histogramme des durées, échecs et blocages
+d'authentification, nombre de comptes, de collections et d'objets, taille de
+la base, et l'état de la sauvegarde automatique — de quoi alerter si
+`time() - kalendra_backup_last_success_timestamp_seconds` dépasse deux jours.
+Aucun nom de compte ni chemin n'y figure.
+
+La route n'est pas derrière l'authentification Basic : positionnez
+`KALENDRA_METRICS_TOKEN` pour exiger `Authorization: Bearer <jeton>` du
+collecteur, ou ne l'exposez pas au-delà du réseau interne.
 
 ---
 
@@ -408,6 +459,12 @@ Tout passe par l'environnement.
 | `KALENDRA_TRUST_PROXY` | `false` | Lit l'adresse du client dans `X-Forwarded-For` (derrière un proxy uniquement) |
 | `KALENDRA_QUOTA_BYTES` | `0` | Espace par compte en octets, `0` = illimité |
 | `KALENDRA_ACCESS_LOG` | `true` | Une ligne de journal par requête |
+| `KALENDRA_BACKUP_DIR` | *(vide)* | Dossier de la sauvegarde automatique quotidienne |
+| `KALENDRA_BACKUP_KEEP` | `7` | Sauvegardes automatiques conservées, `0` = toutes |
+| `KALENDRA_MAINTENANCE_HOUR` | `3` | Heure locale du passage de maintenance |
+| `KALENDRA_SYNC_RETENTION_DAYS` | `90` | Durée de conservation des suppressions, `0` = toujours |
+| `KALENDRA_METRICS` | `false` | Sert `/metrics` (Prometheus) |
+| `KALENDRA_METRICS_TOKEN` | *(vide)* | Jeton Bearer exigé sur `/metrics` |
 | `KALENDRA_LOG_LEVEL` | `info` | `debug`, `info`, `warning`, `error` |
 
 ---
@@ -432,6 +489,8 @@ kalendra app-password add admin "téléphone"   # affiche le secret une seule fo
 kalendra app-password list admin
 kalendra app-password rm admin 3
 kalendra backup /data/sauvegardes/            # ou un nom de fichier ; --compact
+kalendra maintenance                          # purge et sauvegarde, comme chaque nuit
+kalendra user export admin -o admin.zip       # tous les agendas et carnets du compte
 kalendra serve --host 0.0.0.0 --port 5232
 ```
 

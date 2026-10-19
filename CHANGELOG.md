@@ -5,6 +5,26 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Ajouté
+
+- Changement de son propre mot de passe depuis « Mon compte », l'actuel étant
+  redemandé. Tout changement de mot de passe (page compte, `/admin`, CLI) vaut
+  désormais dès la requête suivante, cache d'identifiants compris.
+- Onglet **Tâches** dans la vue d'un agenda : tâches en cours par échéance et
+  priorité, retards signalés, tâches terminées repliées.
+- Recherche dans ses agendas (`/view/recherche/`), insensible à la casse et aux
+  accents, sur les titres, lieux, descriptions et catégories.
+- Export de tout un compte en `.zip` (agendas en `.ics`, carnets en `.vcf`)
+  depuis « Mon compte » ou `kalendra user export`.
+- Sauvegarde automatique quotidienne avec rotation (`KALENDRA_BACKUP_DIR`,
+  `KALENDRA_BACKUP_KEEP`, `KALENDRA_MAINTENANCE_HOUR`) et commande
+  `kalendra maintenance`.
+- Métriques Prometheus sur `/metrics` (`KALENDRA_METRICS`,
+  `KALENDRA_METRICS_TOKEN`), sans dépendance.
+- Purge des suppressions anciennes du journal de synchronisation
+  (`KALENDRA_SYNC_RETENTION_DAYS`, 90 jours) ; un jeton plus ancien reçoit
+  `valid-sync-token` et le client resynchronise entièrement. Schéma de base v5.
+
 ### Corrigé
 
 - « Préparer une version » ne committait pas `pyproject.toml` : l'étiquette

@@ -172,6 +172,8 @@ choix de conception, pas un oubli.
 | `calendarview.py` | Vues mois, semaine, liste et contacts, en lecture seule |
 | `account.py` | Page « Mon compte » : clients, profil Apple, mots de passe d'application |
 | `webui.py` | Barre latérale et styles communs aux deux interfaces |
+| `maintenance.py` | Passage nocturne : sauvegarde automatique, purge du journal |
+| `metrics.py` | Métriques Prometheus, format texte écrit à la main |
 | `cli.py` | Ligne de commande |
 | `http.py` | `Request` / `Response`, sans framework |
 | `xmlutil.py` | Espaces de noms DAV, sérialisation, analyse XML sûre |
@@ -196,6 +198,8 @@ choix de conception, pas un oubli.
 /view/<user>/<agenda>/?m=AAAA-MM      vue mensuelle, lecture seule
 /view/<user>/<agenda>/?vue=semaine&d=AAAA-MM-JJ   vue semaine
 /view/<user>/<agenda>/?vue=liste&m=AAAA-MM        vue liste
+/view/<user>/<agenda>/?vue=taches     tâches (VTODO), lecture seule
+/view/recherche/?q=…                  recherche dans ses agendas
 /view/<user>/<agenda>/?export=ics     téléchargement de l'agenda entier
 /view/<user>/<agenda>/<x>.ics         détail d'un objet
 /view/<user>/<agenda>/import          POST, dépôt d'un .ics (CSRF)
@@ -207,19 +211,22 @@ choix de conception, pas un oubli.
 /view/contacts/<user>/<carnet>/import  POST, dépôt d'un .vcf (CSRF)
 /view/compte/                         « Mon compte » ; POST : mots de passe (CSRF)
 /view/compte/?profil=apple            profil .mobileconfig
+/view/compte/?export=zip              archive de tout le compte
 /admin…                               interface d'administration (is_admin)
 /health                               sonde, sans authentification
+/metrics                              Prometheus (KALENDRA_METRICS), jeton Bearer facultatif
 ```
 
 `/view/` est accessible à tout compte authentifié, sur ses propres agendas et
 carnets (un administrateur voit tout) ; `/admin` exige `is_admin`. Le préfixe
 `/view/contacts/` n'est emprunté que si le segment suivant désigne un compte
 existant — sans quoi un utilisateur nommé « contacts » perdrait l'accès à ses
-propres agendas. `/view/compte/` tient en un seul segment, ce qu'aucun
-agenda n'a jamais désigné (il en faut deux) : il ne masque donc rien. Les
-modes et l'export passent par la chaîne de requête plutôt que par un segment,
-pour la même raison — `export.ics` pourrait être le nom d'un objet. Les deux
-interfaces sont coupées ensemble par `KALENDRA_ADMIN_UI=false`.
+propres agendas. `/view/compte/` et `/view/recherche/` tiennent en un seul
+segment, ce qu'aucun agenda n'a jamais désigné (il en faut deux) : ils ne
+masquent donc rien. Les modes et l'export passent par la chaîne de requête
+plutôt que par un segment, pour la même raison — `export.ics` pourrait être le
+nom d'un objet. Les deux interfaces sont coupées ensemble par
+`KALENDRA_ADMIN_UI=false`.
 
 ### Fuseaux dans la vue mensuelle
 
@@ -257,6 +264,13 @@ un journal qui grossit indéfiniment.
 
 **Attention :** changer le format du jeton invalide les synchronisations en
 cours — les clients referont une synchronisation complète.
+
+Les lignes de suppression (`deleted = 1`), elles, s'accumuleraient sans fin :
+depuis le schéma v5 elles sont datées (`changed_at`) et purgées au-delà de
+`KALENDRA_SYNC_RETENTION_DAYS`. La purge relève `calendars.sync_floor` à la
+dernière révision oubliée ; un jeton plus ancien est refusé
+(`valid-sync-token`), car y répondre laisserait au client un objet supprimé.
+Refusé, il resynchronise tout : plus lent, jamais faux.
 
 ---
 
@@ -337,6 +351,9 @@ verbes WebDAV.
   plus à droite de `X-Forwarded-For` : c'est la seule qu'ajoute notre proxy.
 - Le journal d'accès ne contient **jamais** un jeton de flux : le chemin
   `/feed/<jeton>` y devient `/feed/…`.
+- `/metrics` n'a que des étiquettes bornées : un verbe HTTP inconnu compte
+  comme `OTHER` (sinon chaque client créerait des séries à volonté), et aucun
+  nom de compte ni chemin n'y apparaît.
 - Toute valeur choisie par le client (chemin, compte, `X-Forwarded-For`) passe
   par `http.for_log` avant d'être journalisée : un CR/LF forgerait sinon une
   ligne entière.
@@ -350,6 +367,13 @@ valide implicitement la transaction en cours et échouerait à l'intérieur.
 Une connexion par thread, WAL activé. C'est pourquoi une sauvegarde ne se fait
 pas par `cp` : `Database.backup()` passe par l'API de sauvegarde de SQLite (ou
 `VACUUM INTO`) et rend un fichier autonome, sans `-wal`.
+
+Le passage de maintenance (`maintenance.py`) ne tourne que sous `kalendra
+serve` et le cycle de vie ASGI, jamais dans le constructeur de `Kalendra` : la
+suite de tests et la CLI créent des applications qui ne doivent pas lancer de
+fil. Il ne lève jamais d'exception — elle tuerait le fil, et toutes les
+sauvegardes suivantes avec lui — et sa rotation ne supprime que des fichiers
+nommés `kalendra-AAAAMMJJ-HHMMSS.db`.
 
 Le quota (`KALENDRA_QUOTA_BYTES`) est celui du **propriétaire** de la
 collection, pas de qui écrit : un administrateur qui remplit l'agenda d'un
