@@ -321,8 +321,10 @@ verbes WebDAV.
   (`DUMMY_HASH`), pour ne pas révéler par le temps de réponse quels
   identifiants existent.
 - Le cache d'identifiants (`_AuthCache`, 60 s par défaut) existe parce qu'un
-  client CalDAV enchaîne les requêtes et que PBKDF2 coûte ~100 ms. Un
-  changement de mot de passe prend donc effet au plus tard après ce délai.
+  client CalDAV enchaîne les requêtes et que PBKDF2 coûte ~100 ms. Chaque
+  entrée retient l'empreinte du mot de passe vérifié : si elle a changé depuis
+  (page « Mon compte », `/admin`, CLI), l'entrée est refusée, et le changement
+  vaut donc dès la requête suivante.
 - L'interface d'administration porte un jeton anti-CSRF sur chaque formulaire :
   le navigateur rejoue automatiquement les identifiants Basic, donc l'absence
   de jeton serait exploitable.

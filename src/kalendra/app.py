@@ -44,22 +44,26 @@ class _AuthCache:
 
     PBKDF2 deliberately costs ~100 ms, yet a CalDAV client queries the server in
     bursts (PROPFIND, REPORT, multiget and so on). So the HMAC digest of the
-    username/password pair is kept for a short while. A password change takes
-    effect after that delay at the latest.
+    username/password pair is kept for a short while.
+
+    Each entry also remembers the account's password digest as it was when
+    verified: a hit whose digest no longer matches is refused, so a password
+    change — from the account page, the admin UI or the CLI — takes effect on
+    the very next request rather than when the entry expires.
     """
 
     def __init__(self, ttl: int, capacity: int = 512) -> None:
         self.ttl = ttl
         self.capacity = capacity
-        self._entries: dict[str, tuple[float, int, int | None]] = {}
+        self._entries: dict[str, tuple[float, int, int | None, str]] = {}
         self._lock = threading.Lock()
 
     def _key(self, secret: str, username: str, password: str) -> str:
         payload = f"{username}\0{password}".encode()
         return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
-    def get(self, secret: str, username: str, password: str) -> tuple[int, int | None] | None:
-        """Return (user id, app password id or None) for fresh credentials."""
+    def get(self, secret: str, username: str, password: str) -> tuple[int, int | None, str] | None:
+        """Return (user id, app password id or None, password digest) if fresh."""
         if self.ttl <= 0:
             return None
         key = self._key(secret, username, password)
@@ -68,14 +72,20 @@ class _AuthCache:
             entry = self._entries.get(key)
             if entry is None:
                 return None
-            expires, user_id, app_id = entry
+            expires, user_id, app_id, digest = entry
             if expires < now:
                 self._entries.pop(key, None)
                 return None
-            return user_id, app_id
+            return user_id, app_id, digest
 
     def store(
-        self, secret: str, username: str, password: str, user_id: int, app_id: int | None = None
+        self,
+        secret: str,
+        username: str,
+        password: str,
+        user_id: int,
+        app_id: int | None = None,
+        digest: str = "",
     ) -> None:
         if self.ttl <= 0:
             return
@@ -83,7 +93,7 @@ class _AuthCache:
         with self._lock:
             if len(self._entries) >= self.capacity:
                 self._entries.clear()
-            self._entries[key] = (time.monotonic() + self.ttl, user_id, app_id)
+            self._entries[key] = (time.monotonic() + self.ttl, user_id, app_id, digest)
 
     def clear(self) -> None:
         with self._lock:
@@ -340,12 +350,16 @@ class Kalendra:
             # Checked before the lockout: a cache hit proves the password was
             # right a moment ago, so a family member behind the same address as
             # an attacker keeps working.
-            user_id, app_id = cached
+            user_id, app_id, digest = cached
             user = self.db.get_user_by_id(user_id)
             # A revoked app password must stop working now, not when the cache
-            # entry expires: one indexed lookup is cheap next to PBKDF2.
-            revoked = app_id is not None and self.db.get_app_password(app_id) is None
-            if user is not None and user["username"] == username and not revoked:
+            # entry expires: one indexed lookup is cheap next to PBKDF2. The
+            # same goes for an account password that has since been changed.
+            if app_id is not None:
+                stale = self.db.get_app_password(app_id) is None
+            else:
+                stale = user is None or user["password_hash"] != digest
+            if user is not None and user["username"] == username and not stale:
                 request.via_app_password = app_id is not None
                 return user
 
@@ -374,7 +388,9 @@ class Kalendra:
             self.throttle.failure(address)
             return None
         self.throttle.success(address)
-        self.auth_cache.store(secret, username, password, int(user["id"]))
+        self.auth_cache.store(
+            secret, username, password, int(user["id"]), digest=user["password_hash"]
+        )
         return user
 
     @staticmethod
