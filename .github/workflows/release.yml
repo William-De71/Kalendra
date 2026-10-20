@@ -9,13 +9,13 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: "Étiquette à publier (ex. v1.0.0)"
+        description: "Étiquette à publier (ex. v1.0.0 ou 1.0.0)"
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: "Étiquette à publier (ex. v1.0.0)"
+        description: "Étiquette à publier (ex. v1.0.0 ou 1.0.0)"
         required: true
 
 permissions:
@@ -26,6 +26,9 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
+  # "1.4.0" typed by hand in the Run workflow form would otherwise be looked
+  # up as a branch or tag named 1.4.0, and the checkout fails.
+  TAG: ${{ !inputs.tag && github.ref_name || (startsWith(inputs.tag, 'v') && inputs.tag || format('v{0}', inputs.tag)) }}
 
 jobs:
   verify:
@@ -37,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.TAG }}
 
       - uses: actions/setup-python@v7
         with:
@@ -46,7 +49,7 @@ jobs:
       - name: Déterminer la version
         id: version
         run: |
-          ref="${{ inputs.tag || github.ref_name }}"
+          ref="${TAG}"
           version="${ref#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Version publiée : ${version}"
@@ -85,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.TAG }}
 
       - uses: docker/setup-qemu-action@v4
 
@@ -151,7 +154,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.TAG }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v7
@@ -189,7 +192,7 @@ jobs:
       - name: Publier la release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ env.TAG }}
           name: Kalendra ${{ needs.verify.outputs.version }}
           body_path: release-notes.md
           files: dist/*
