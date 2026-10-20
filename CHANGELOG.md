@@ -5,6 +5,12 @@ versionnage sémantique.
 
 ## [Non publié]
 
+### Corrigé
+
+- Les images Docker publiées par « Préparer une version » ne portaient que
+  `latest` : les étiquettes `X.Y.Z`, `X.Y` et `X` sont de nouveau poussées.
+  Republier une ancienne version à la main ne déplace plus `latest`.
+
 ## [1.4.0] — 2026-10-19
 
 ### Ajouté
