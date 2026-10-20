@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      latest: ${{ steps.latest.outputs.latest }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,6 +50,18 @@ jobs:
           version="${ref#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Version publiée : ${version}"
+
+      # Re-publishing an older tag by hand must not move "latest" back, and a
+      # pre-release never gets it.
+      - name: Est-ce la version la plus récente ?
+        id: latest
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          newest=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' \
+            | grep -v -- - | sort -V | tail -n 1)
+          if [ "$tag" = "$newest" ]; then latest=true; else latest=false; fi
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "Plus récente : ${newest} — latest=${latest}"
 
       - name: La version du paquet doit correspondre à l'étiquette
         run: |
@@ -88,13 +101,16 @@ jobs:
       - name: Étiquettes et métadonnées
         id: meta
         uses: docker/metadata-action@v6
+        # The version is passed explicitly: without `value`, semver tags are
+        # read from github.ref, which is refs/heads/main when "Préparer une
+        # version" calls this workflow — only "latest" would be pushed.
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest
+            type=semver,pattern={{version}},value=${{ needs.verify.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.verify.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.verify.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.verify.outputs.latest }}
           labels: |
             org.opencontainers.image.title=Kalendra
             org.opencontainers.image.description=Serveur CalDAV autonome sur SQLite avec flux ICS
