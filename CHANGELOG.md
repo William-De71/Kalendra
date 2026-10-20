@@ -10,6 +10,8 @@ versionnage sémantique.
 - Les images Docker publiées par « Préparer une version » ne portaient que
   `latest` : les étiquettes `X.Y.Z`, `X.Y` et `X` sont de nouveau poussées.
   Republier une ancienne version à la main ne déplace plus `latest`.
+- Relancer « Release » à la main accepte l'étiquette avec ou sans `v`
+  (`1.4.0` comme `v1.4.0`) ; sans le `v`, la récupération du code échouait.
 
 ## [1.4.0] — 2026-10-19
 
